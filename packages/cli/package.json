@@ -1,0 +1,29 @@
+{
+  "name": "@domflax/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "domflax-cli": "./dist/index.cjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@domflax/core": "*"
+  },
+  "private": true
+}

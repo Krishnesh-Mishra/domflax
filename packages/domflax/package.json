@@ -1,0 +1,75 @@
+{
+  "name": "domflax",
+  "version": "0.0.1",
+  "description": "Compile-time DOM flattener and semantic CSS compressor — fewer DOM nodes, smaller class sets, identical rendered UI.",
+  "keywords": [
+    "dom",
+    "css",
+    "tailwind",
+    "optimizer",
+    "jsx",
+    "html",
+    "vite-plugin",
+    "webpack-plugin",
+    "unplugin"
+  ],
+  "homepage": "https://github.com/Krishnesh-Mishra/domflax#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Krishnesh-Mishra/domflax.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Krishnesh-Mishra/domflax/issues"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Krishnesh Mishra",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./pattern-kit": {
+      "types": "./dist/pattern-kit.d.ts",
+      "import": "./dist/pattern-kit.js",
+      "require": "./dist/pattern-kit.cjs"
+    },
+    "./verify": {
+      "types": "./dist/verify.d.ts",
+      "import": "./dist/verify.js",
+      "require": "./dist/verify.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "domflax": "./dist/cli.cjs"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "playwright": "*"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@domflax/core": "*",
+    "@domflax/patterns": "*",
+    "@domflax/pattern-kit": "*",
+    "@domflax/verify": "*",
+    "@domflax/cli": "*"
+  }
+}

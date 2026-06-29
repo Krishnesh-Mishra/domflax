@@ -1,55 +1,23 @@
 {
-  "name": "domflax",
-  "version": "0.0.1",
-  "description": "Compile-time DOM flattener and semantic CSS compressor. Fewer DOM nodes and smaller class sets with identical rendered UI. Works with Vite, Next.js, Tailwind, and custom CSS.",
+  "name": "domflax-monorepo",
+  "private": true,
   "type": "module",
-  "license": "MIT",
-  "author": "Krishnesh Mishra",
-  "keywords": [
-    "dom",
-    "flatten",
-    "compress",
-    "tailwind",
-    "vite",
-    "nextjs",
-    "unplugin",
-    "performance",
-    "css",
-    "compiler",
-    "optimizer"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Krishnesh-Mishra/domflax.git"
-  },
-  "homepage": "https://github.com/Krishnesh-Mishra/domflax#readme",
-  "bugs": {
-    "url": "https://github.com/Krishnesh-Mishra/domflax/issues"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist"
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "tsup": "^8.5.1",
-    "typescript": "^6.0.3"
+    "typescript": "latest",
+    "tsup": "latest",
+    "vitest": "latest",
+    "@types/node": "latest"
   }
 }
