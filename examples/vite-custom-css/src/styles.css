@@ -1,0 +1,46 @@
+/*
+ * Hand-written CSS for the domflax custom-CSS provider demo.
+ *
+ * domflax parses THIS file (forward: class -> computed style, reverse: style -> class)
+ * and uses it to decide which wrapper elements are pure structural noise and can be
+ * flattened away, and which must be preserved because a CSS selector depends on them.
+ */
+
+/* A centering wrapper: its ONLY job is to flex-center its single child.
+   domflax recognizes this computed-style signature (display:flex + center/center)
+   and can flatten the wrapper, moving `place-self:center` down onto the child. */
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* A visible card. It paints its own background/padding/border, so it is never a
+   "do-nothing" wrapper — it is real UI and is always kept. */
+.card {
+  padding: 1rem;
+  background: #fff;
+  border-radius: 8px;
+}
+
+/* A plain utility class. */
+.muted {
+  color: #888;
+}
+
+/* A purely structural wrapper class with NO paint of its own. On its own a
+   <div class="item"> that just wraps one child looks like removable noise...
+   ...EXCEPT the combinator rule below depends on it (see `.list > .item h3`). */
+.item {
+  display: block;
+}
+
+/* COMBINATOR rule.
+   The crimson color is applied to an <h3> ONLY when it lives inside a `.item`
+   that is a DIRECT child of `.list`. If domflax flattened the `.item` wrapper
+   away, this selector would stop matching and the heading would lose its color.
+   This is exactly the case the selector-safety guard must protect: the wrapper
+   is load-bearing for the cascade, so it must NOT be flattened. */
+.list > .item h3 {
+  color: crimson;
+}

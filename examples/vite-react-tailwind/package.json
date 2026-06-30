@@ -1,0 +1,28 @@
+{
+  "name": "domflax-example-vite-react-tailwind",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Standalone example: Vite + React + Tailwind wired through the domflax build plugin.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "demo": "echo \"Run 'npm run build' then inspect dist/ — domflax has already flattened/compressed the JSX during the build. See README.md ('How to see the effect').\""
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "domflax": "file:../../packages/domflax",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

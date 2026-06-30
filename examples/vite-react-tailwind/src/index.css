@@ -1,0 +1,14 @@
+/* Tailwind v3 directives (this example is pinned to tailwindcss ^3.4). */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
