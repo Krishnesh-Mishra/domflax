@@ -23,7 +23,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@domflax/core": "*"
+    "@domflax/core": "*",
+    "@domflax/frontend-jsx": "*",
+    "@domflax/pattern-kit": "*",
+    "@domflax/patterns": "*",
+    "@domflax/resolver-css": "*",
+    "@domflax/resolver-tailwind": "*",
+    "@clack/prompts": "^0.11.0"
   },
   "private": true
 }

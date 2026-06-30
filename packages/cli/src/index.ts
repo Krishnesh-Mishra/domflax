@@ -1,169 +1,206 @@
 /**
- * @domflax/cli — the command-line entry point.
+ * @domflax/cli — the real command-line entry point.
  *
- * TYPED STUB. Argument parsing is real (Node built-ins only: `node:util`'s `parseArgs` and
- * `node:fs`); the actual optimization run is wired to {@link import('@domflax/core').Pipeline}
- * in a later stage and currently throws NotImplemented.
- *
- * Future deps (NOT added to package.json while this is a stub): none — the CLI stays
- * dependency-free apart from @domflax/core. Frontend/backend/resolver selection lands when the
- * orchestrator package exists.
+ * Wires the transform engine ({@link createTransform}, built from the lower @domflax/* packages — it
+ * deliberately never imports the `domflax` meta package, which would create a cycle) to file
+ * discovery, OUTPUT SAFETY (Q16), and an optional interactive wizard (Q17). Usable as `npx domflax`
+ * via the meta package's bin, and directly as the `domflax-cli` bin.
  */
 
-import { parseArgs } from 'node:util';
-import { existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import type { FileKind, PipelineConfig, SafetyLevel } from '@domflax/core';
+import type { CliOptions } from './options';
+import { parseInvocation, shouldPrompt, USAGE } from './options';
+import { destinationFor, isGitClean, planWrites } from './safety';
+import { createTransform } from './transform';
+import type { FileStats } from './transform';
+import { discoverInputs } from './walk';
+import { unifiedDiff } from './diff';
+import { runWizard, WIZARD_CANCELLED } from './wizard';
 
-/** Provider/resolver identifiers the CLI knows how to wire (resolver lands in a later stage). */
-export type ProviderId = 'tailwind' | 'css';
+// Re-export the public surface so consumers/tests reach it from the package root.
+export type { CliOptions, ProviderOption } from './options';
+export { parseInvocation, shouldPrompt, USAGE, DEFAULT_SAFETY } from './options';
+export type { WritePlan, WriteMode } from './safety';
+export { destinationFor, isDisposablePath, isGitClean, planWrites } from './safety';
+export type { FileResult, FileStats, Transform } from './transform';
+export { createTransform, buildResolver, builtinPatternNames } from './transform';
+export { discoverInputs, SUPPORTED_EXTS } from './walk';
+export { unifiedDiff } from './diff';
 
-/** Parsed, validated invocation — the shape the (future) orchestrator consumes. */
-export interface CliInvocation {
-  /** Positional source file to optimize. */
-  readonly path: string;
-  /** Style provider to resolve author tokens against. */
-  readonly provider: ProviderId;
-  /** Optional path to a source CSS file feeding the resolver. */
-  readonly css: string | null;
-  /** When true, compute edits but never write them back to disk. */
-  readonly dryRun: boolean;
-  /** When true, emit a machine-readable report instead of (or alongside) rewriting. */
-  readonly report: boolean;
-}
-
-/** Outcome of {@link run}: a process exit code plus the lines that were printed. */
+/** Outcome of a {@link run}: the process exit code. */
 export interface RunResult {
   readonly exitCode: number;
-  readonly stdout: readonly string[];
-  readonly stderr: readonly string[];
 }
 
-/** Default safety level the CLI requests of the pipeline (D-level: 2 = default). */
-export const DEFAULT_SAFETY: SafetyLevel = 2;
-
-const DEFAULT_PROVIDER: ProviderId = 'tailwind';
-
-function isProviderId(value: string): value is ProviderId {
-  return value === 'tailwind' || value === 'css';
+interface Totals {
+  files: number;
+  changed: number;
+  nodesRemoved: number;
+  classesSaved: number;
+  bytesSaved: number;
 }
 
-/**
- * Maps a file path to the frontend {@link FileKind}. Real, trivial logic — the heavy parse lives
- * downstream. Unknown extensions map to `'unknown'` so the orchestrator can reject them.
- */
-export function fileKindOf(path: string): FileKind {
-  const lower = path.toLowerCase();
-  if (lower.endsWith('.tsx')) return 'tsx';
-  if (lower.endsWith('.jsx')) return 'jsx';
-  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
-  return 'unknown';
+function addStats(totals: Totals, stats: FileStats, changed: boolean): void {
+  totals.files += 1;
+  if (changed) totals.changed += 1;
+  totals.nodesRemoved += stats.nodesRemoved;
+  totals.classesSaved += stats.classesSaved;
+  totals.bytesSaved += stats.bytesSaved;
 }
 
-/** Builds the pipeline config the CLI would hand to the orchestrator. */
-export function toPipelineConfig(inv: CliInvocation): PipelineConfig {
-  return {
-    safety: DEFAULT_SAFETY,
-    emitSourceMap: !inv.dryRun,
-  };
+function printReport(totals: Totals): void {
+  console.log('');
+  console.log('domflax report');
+  console.log(`  files processed : ${totals.files}`);
+  console.log(`  files changed   : ${totals.changed}`);
+  console.log(`  nodes removed   : ${totals.nodesRemoved}`);
+  console.log(`  classes saved   : ${totals.classesSaved}`);
+  console.log(`  bytes saved     : ${totals.bytesSaved}`);
 }
 
 /**
- * Parses argv (excluding `node` + script path) into a validated {@link CliInvocation}.
- * Throws on malformed flags or a missing positional path.
+ * Execute a fully-resolved {@link CliOptions}: discover inputs, enforce output safety, transform each
+ * file, and either preview (dry-run), write to the mirrored output, or overwrite in place.
  */
-export function parseInvocation(argv: readonly string[]): CliInvocation {
-  const { values, positionals } = parseArgs({
-    args: argv as string[],
-    allowPositionals: true,
-    options: {
-      provider: { type: 'string' },
-      css: { type: 'string' },
-      'dry-run': { type: 'boolean', default: false },
-      report: { type: 'boolean', default: false },
-    },
-  });
+export function execute(options: CliOptions): RunResult {
+  const { files, inputRoot, warnings } = discoverInputs(options.paths);
+  for (const w of warnings) console.error(`domflax: ${w}`);
 
-  const path = positionals[0];
-  if (path === undefined) {
-    throw new Error('domflax-cli: missing required <path> positional argument');
+  if (files.length === 0) {
+    console.error('domflax: no .jsx/.tsx/.html files found for the given paths');
+    return { exitCode: 1 };
   }
 
-  const provider = values.provider ?? DEFAULT_PROVIDER;
-  if (!isProviderId(provider)) {
-    throw new Error(`domflax-cli: unknown --provider "${provider}" (expected "tailwind" or "css")`);
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const gitClean =
+    options.dangerouslyOverwriteSource && !options.noGitCheck ? isGitClean(projectRoot) : true;
+
+  const planned = planWrites(options, gitClean);
+  if (!planned.ok) {
+    console.error(`domflax: ${planned.error}`);
+    return { exitCode: 1 };
+  }
+  const plan = planned.value;
+
+  const transform = createTransform(options);
+  const totals: Totals = { files: 0, changed: 0, nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 };
+  let failures = 0;
+
+  for (const file of files) {
+    let code: string;
+    try {
+      code = readFileSync(file, 'utf8');
+    } catch (err) {
+      console.error(`domflax: cannot read ${file}: ${String((err as Error)?.message ?? err)}`);
+      failures += 1;
+      continue;
+    }
+
+    const result = transform.transformFile(code, file);
+    addStats(totals, result.stats, result.changed);
+
+    if (options.dryRun) {
+      const rel = path.relative(inputRoot, file) || path.basename(file);
+      if (result.changed) console.log(unifiedDiff(code, result.code, rel));
+      else if (!options.report) console.log(`  (unchanged) ${rel}`);
+      continue;
+    }
+
+    if (!result.changed) continue;
+
+    const target = destinationFor(file, inputRoot, plan);
+    if (!target.ok) {
+      console.error(`domflax: ${target.error}`);
+      failures += 1;
+      continue;
+    }
+    try {
+      mkdirSync(path.dirname(target.value), { recursive: true });
+      writeFileSync(target.value, result.code, 'utf8');
+      console.log(`domflax: wrote ${path.relative(process.cwd(), target.value) || target.value}`);
+    } catch (err) {
+      console.error(`domflax: cannot write ${target.value}: ${String((err as Error)?.message ?? err)}`);
+      failures += 1;
+    }
   }
 
-  return {
-    path,
-    provider,
-    css: values.css ?? null,
-    dryRun: values['dry-run'] === true,
-    report: values.report === true,
-  };
+  if (options.report) printReport(totals);
+
+  if (options.dryRun) console.log('\ndomflax: dry run — no files were written.');
+
+  return { exitCode: failures > 0 ? 1 : 0 };
 }
 
-const USAGE = [
-  'Usage: domflax-cli <path> [options]',
-  '',
-  'Options:',
-  '  --provider <tailwind|css>  Style provider to resolve tokens (default: tailwind)',
-  '  --css <path>               Source CSS file feeding the resolver',
-  '  --dry-run                  Compute edits without writing them back',
-  '  --report                   Emit a machine-readable report',
-].join('\n');
-
 /**
- * CLI entry point. Parses argv, validates the input, and prints a not-yet-implemented notice.
- * Returns a {@link RunResult} so callers/tests can assert without intercepting the real streams;
- * the thin `bin` wrapper below maps it onto `console` + `process.exitCode`.
+ * CLI entry point. Parses argv, optionally launches the wizard (TTY + no positionals only), and
+ * executes. Sets `process.exitCode`; never throws.
  */
-export function run(argv: readonly string[]): RunResult {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-
-  let inv: CliInvocation;
+export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  let options: CliOptions;
   try {
-    inv = parseInvocation(argv);
+    options = parseInvocation(argv);
   } catch (err) {
-    stderr.push(err instanceof Error ? err.message : String(err));
-    stderr.push(USAGE);
-    return { exitCode: 2, stdout, stderr };
+    console.error(err instanceof Error ? err.message : String(err));
+    console.error(USAGE);
+    process.exitCode = 2;
+    return;
   }
 
-  if (!existsSync(inv.path)) {
-    stderr.push(`domflax-cli: no such file: ${inv.path}`);
-    return { exitCode: 1, stdout, stderr };
+  // Treat a CI environment as non-interactive even if it reports a TTY, so the wizard can never
+  // block a pipeline (CI runners commonly set `CI`; cover the usual vendor flags too).
+  const inCi =
+    !!process.env.CI ||
+    !!process.env.CONTINUOUS_INTEGRATION ||
+    !!process.env.GITHUB_ACTIONS ||
+    !!process.env.GITLAB_CI ||
+    !!process.env.BUILDKITE ||
+    !!process.env.TF_BUILD;
+  const isTty = process.stdout.isTTY === true && !inCi;
+  if (shouldPrompt(options, isTty)) {
+    const wizardResult = await runWizard(options);
+    if (wizardResult === WIZARD_CANCELLED) {
+      process.exitCode = 0;
+      return;
+    }
+    options = wizardResult;
   }
 
-  const kind = fileKindOf(inv.path);
-  if (kind === 'unknown') {
-    stderr.push(`domflax-cli: unsupported file kind for ${inv.path} (expected .jsx/.tsx/.html)`);
-    return { exitCode: 1, stdout, stderr };
+  if (options.paths.length === 0) {
+    console.error('domflax: no input paths given (and not an interactive terminal).');
+    console.error(USAGE);
+    process.exitCode = 2;
+    return;
   }
 
-  stdout.push(`domflax-cli (stub)`);
-  stdout.push(`  path:     ${inv.path} [${kind}]`);
-  stdout.push(`  provider: ${inv.provider}`);
-  stdout.push(`  css:      ${inv.css ?? '(none)'}`);
-  stdout.push(`  dry-run:  ${inv.dryRun}`);
-  stdout.push(`  report:   ${inv.report}`);
-  stdout.push('');
-  stdout.push('NotImplemented: the optimization pipeline lands in a later stage.');
-
-  return { exitCode: 0, stdout, stderr };
+  try {
+    const result = execute(options);
+    process.exitCode = result.exitCode;
+  } catch (err) {
+    console.error(`domflax: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
 }
 
 /**
- * Executes {@link run} and binds its result to the real process: writes the captured lines to the
- * corresponding streams and sets `process.exitCode`. The `bin` shim calls this.
+ * True only when this module is the process entry (the `domflax-cli` bin), not when imported. Paths
+ * are normalized (and case-folded on win32) so the comparison survives drive-letter case and
+ * separator differences between `import.meta.url` and `process.argv[1]`.
  */
-export function main(argv: readonly string[] = process.argv.slice(2)): void {
-  const result = run(argv);
-  for (const line of result.stdout) console.log(line);
-  for (const line of result.stderr) console.error(line);
-  process.exitCode = result.exitCode;
+function isMainEntry(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    const self = path.resolve(fileURLToPath(import.meta.url));
+    const argv = path.resolve(entry);
+    return process.platform === 'win32' ? self.toLowerCase() === argv.toLowerCase() : self === argv;
+  } catch {
+    return false;
+  }
 }
 
-// Auto-run when invoked as the bin (CJS/ESM both expose this entry as the program).
-main();
+if (isMainEntry()) {
+  void main();
+}
