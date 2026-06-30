@@ -17,36 +17,17 @@
  * It is a pure representation change: the resolved box model is identical, only the declaration
  * count shrinks from four to one, which the backend can then re-emit as a single shorthand utility.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, and combinator subjects; the `rewriteClasses` recipe rebuilds the class
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the `rewriteClasses` recipe rebuilds the class
  * StyleMap, declining (`null`) unless all four margin longhands are present with a uniform
  * (non-)`!important` flag.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  CssValue,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, CssValue, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── constants / helpers ───────────────────────── */
 
@@ -61,14 +42,6 @@ const MARGIN_SIDES = [
 const MARGIN_SIDE_SET: ReadonlySet<string> = new Set(MARGIN_SIDES);
 
 const BASE_KEY: ConditionKey = conditionKey(BASE_CONDITION);
-
-function asElement(node: NodeLike): DeepReadonly<IRElement> | null {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>) : null;
-}
-
-/** Raw-html opacity barrier — no combinator exposes this, so narrow + read the meta flag locally. */
-const hasDangerousHtml: Matcher = (node) => asElement(node)?.meta.hasDangerousHtml ?? false;
 
 /** Collapse four side values into the shortest legal CSS `margin` shorthand value string. */
 function collapseMarginValue(top: string, right: string, bottom: string, left: string): string {
@@ -116,18 +89,10 @@ export const marginShorthand = definePattern({
     before: '<div style="margin-top:8px;margin-right:8px;margin-bottom:8px;margin-left:8px"/>',
     after: '<div style="margin:8px"/>',
     safetyRationale:
-      'Pure representation change (no pixels move); skips nodes with ref/handlers/dynamic children/' +
-      'raw html, dynamic class segments, or combinator-subject selectors.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDynamicClasses),
-      not(hasDangerousHtml),
-      not(targetedByCombinator),
-    ],
+      'A pure representation change of the same computed margins (no pixels move) — a class-only change. ' +
+      'It is safe even on an element with a ref, event handler, dynamic child, or dangerouslySetInnerHTML ' +
+      '— a className rewrite touches none of them; only a dynamic/opaque class list or a ' +
+      'combinator-subject class is excluded, so no behaviour or project selector is disturbed.',
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {

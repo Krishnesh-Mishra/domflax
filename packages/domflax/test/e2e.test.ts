@@ -109,7 +109,7 @@ describe('createDomflax().transform — full modules survive surgery (verify off
     '',
   ].join('\n');
 
-  it('keeps the flex wrapper (no rendering change) and preserves the child padding verbatim', () => {
+  it('keeps the flex wrapper (no rendering change) but still COMPRESSES the dynamic-child div', () => {
     const { code: out } = createDomflax().transform(CARD, 'Card.tsx');
 
     // surrounding module survives …
@@ -123,9 +123,11 @@ describe('createDomflax().transform — full modules survive surgery (verify off
     expect(out).toContain('items-center');
     expect(out).not.toContain('place-self-center');
 
-    // … and the inner div (a dynamic-child `{title}` element, never flattened nor compressed) keeps
-    //     its padding verbatim — nothing was dropped.
-    expect(out).toContain('px-4 py-4');
+    // … and the inner div COMPRESSES (px-4 py-4 → p-4) even though it has a dynamic `{title}` child:
+    //     compress only rewrites the element's OWN class tokens, so a dynamic child never blocks it.
+    expect(out).toContain('p-4');
+    expect(out).not.toContain('px-4');
+    expect(out).not.toContain('py-4');
     expect(out).toContain('bg-white');
 
     // The output is still a valid, complete module (re-transforming it does not explode).
@@ -161,17 +163,22 @@ describe('createDomflax().transform — full modules survive surgery (verify off
 
     expect(out).toContain('{items.map((it) => (');
     expect(out).toContain('key={it.id}');
-    expect(out).toContain('className="mx-2 my-2"');
     expect(out).toContain('{it.label}');
 
     expect(out).toContain('dangerouslySetInnerHTML={{ __html: html }}');
 
-    // The static (non-dynamic-child) <li> compressed px-2 py-2 → p-2 …
+    // The static <li> compressed px-2 py-2 → p-2 …
     expect(out).toContain('className="p-2"');
     expect(out).not.toContain('px-2');
     expect(out).not.toContain('py-2');
 
-    // … while the <ul> (which has dynamic children) stays put — no spurious rewrite.
+    // … and the mapped <li> ALSO compresses mx-2 my-2 → m-2, even though its `{it.label}` child is
+    //     dynamic: compress rewrites only the element's own class tokens (no child is affected).
+    expect(out).toContain('className="m-2"');
+    expect(out).not.toContain('mx-2');
+    expect(out).not.toContain('my-2');
+
+    // The <ul>'s single `gap-4` token has nothing to fold, so it stays put.
     expect(out).toContain('className="gap-4"');
   });
 });

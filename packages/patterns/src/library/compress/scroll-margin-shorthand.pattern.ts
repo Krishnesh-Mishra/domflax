@@ -16,36 +16,17 @@
  * when all four sides share one value, replacing them with one `scroll-margin` decl so the minimizing
  * reverse-emit can pick a single `scroll-m-*` token instead of two axis tokens.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, and combinator subjects (compress patterns get NO auto-guards); the
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the
  * `rewriteClasses` recipe rebuilds the class StyleMap, declining (`null`) unless the four sides are
  * present, concrete, equal, and share an `!important` flag.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  CssValue,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, CssValue, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── scroll-margin analysis ───────────────────────── */
 
@@ -107,16 +88,6 @@ function analyzeScrollMargin(sm: StyleMap): ScrollMarginFold | null {
   return { value, important, relative };
 }
 
-/* ───────────────────────── match guards ───────────────────────── */
-
-function asElement(node: NodeLike): DeepReadonly<IRElement> | null {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>) : null;
-}
-
-/** Element carries raw/dangerous HTML (e.g. dangerouslySetInnerHTML) — a hard opacity barrier. */
-const hasDangerousHtml: Matcher = (node) => asElement(node)?.meta.hasDangerousHtml ?? false;
-
 /* ───────────────────────── style rebuild ───────────────────────── */
 
 /** Rebuild `sm` with the four BASE-block scroll-margin longhands replaced by one shorthand decl. */
@@ -160,19 +131,10 @@ export const scrollMarginShorthand = definePattern({
     before: '<div class="scroll-mt-4 scroll-mr-4 scroll-mb-4 scroll-ml-4"/>',
     after: '<div class="scroll-m-4"/>',
     safetyRationale:
-      'scroll-margin is value-identical to four equal scroll-margin sides; the element carries no ' +
-      'ref/handlers/dynamic children/dangerous HTML, no dynamic class segment, and is not a ' +
-      'combinator subject, so no JS identity, behaviour, or project selector is disturbed.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDangerousHtml),
-      not(hasDynamicClasses),
-      not(targetedByCombinator),
-    ],
+      '`scroll-margin` is value-identical to four equal scroll-margin sides — a class-only change. It is ' +
+      'safe even on an element with a ref, event handler, dynamic child, or dangerouslySetInnerHTML — a ' +
+      'className rewrite touches none of them; only a dynamic/opaque class list or a combinator-subject ' +
+      'class is excluded, so no behaviour or project selector is disturbed.',
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {

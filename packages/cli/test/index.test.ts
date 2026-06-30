@@ -69,7 +69,7 @@ describe('createTransform — conservative by default (verify off)', () => {
     expect(result.code).toContain('Hello');
   });
 
-  it('round-trips a FULL module: keeps import/export/function/{title}, compresses, no flatten', () => {
+  it('round-trips a FULL module: keeps import/export/function/{title}, compresses the dynamic-child div, no flatten', () => {
     const code = [
       "import React from 'react';",
       '',
@@ -95,11 +95,14 @@ describe('createTransform — conservative by default (verify off)', () => {
     expect(result.code).toContain('return (');
     expect(result.code).toContain('{title}');
 
-    // … the flex wrapper is PRESERVED (conservative); the dynamic-child `{title}` div keeps its
-    //     padding verbatim (not flattened, not compressed) — nothing dropped.
+    // … the flex wrapper is PRESERVED (conservative); the dynamic-child `{title}` div is NOT
+    //     flattened, but its OWN classes still COMPRESS (px-4 py-4 → p-4) — a dynamic child only
+    //     blocks flatten, never a class-only compress.
     expect(result.code).toContain('justify-center');
     expect(result.code).not.toContain('place-self-center');
-    expect(result.code).toContain('px-4 py-4');
+    expect(result.code).toContain('p-4');
+    expect(result.code).not.toContain('px-4');
+    expect(result.code).not.toContain('py-4');
     expect(result.code).toContain('bg-white');
   });
 

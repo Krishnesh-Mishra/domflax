@@ -14,35 +14,16 @@
  * shorthand at parse time). This pass runs the expansion in reverse on the computed map ONLY when
  * the four sides fold cleanly into a 1- or 2-value form — i.e. `top===bottom` AND `left===right`.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, spread/component identity, and combinator subjects; the `rewriteClasses`
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the `rewriteClasses`
  * recipe rebuilds the class StyleMap, declining (`null`) unless the four sides fold cleanly.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  CssValue,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, CssValue, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  definePattern,
-  not,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── padding analysis ───────────────────────── */
 
@@ -106,16 +87,6 @@ function analyzePadding(sm: StyleMap): PaddingFold | null {
   return { value, important: top.important, relative };
 }
 
-/* ───────────────────────── match guards ───────────────────────── */
-
-/** Element carries no hard opacity barrier that rewriting its class list could disturb. */
-const isInert: Matcher = (node) => {
-  const n = node as DeepReadonly<IRNode>;
-  if (n.kind !== 'element') return false;
-  const el = n as DeepReadonly<IRElement>;
-  return !el.meta.hasDangerousHtml && !el.meta.hasSpreadAttrs && !el.isComponent;
-};
-
 /* ───────────────────────── style rebuild ───────────────────────── */
 
 /** Rebuild `sm` with the four BASE-block padding longhands replaced by one `padding` shorthand. */
@@ -161,19 +132,10 @@ export const paddingShorthand = definePattern({
     before: '<div class="pt-4 pr-4 pb-4 pl-4"/>',
     after: '<div class="p-4"/>',
     safetyRationale:
-      'A value-preserving re-serialization of the same computed styles on the same node; it skips ' +
-      'nodes with ref/handlers/dynamic children/dynamic classes/dangerous html and combinator ' +
-      'subjects, so no JS identity, behaviour, or project selector is disturbed.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDynamicClasses),
-      not(targetedByCombinator),
-      isInert,
-    ],
+      'A value-preserving re-serialization of the same computed padding on the same node — a class-only ' +
+      'change. It is safe even on an element with a ref, event handler, dynamic child, or ' +
+      'dangerouslySetInnerHTML — a className rewrite touches none of them; only a dynamic/opaque class ' +
+      'list or a combinator-subject class is excluded, so no behaviour or project selector is disturbed.',
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {
@@ -189,6 +151,13 @@ export const paddingShorthand = definePattern({
         // replacing the four `p{t,r,b,l}-4` tokens. `bg-red-200` is preserved (its order is stable).
         before: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
         after: '<div className="bg-red-200 p-4">box</div>',
+      },
+      {
+        // A dynamic `{x}` child no longer blocks compress: only the element's OWN class tokens are
+        // rewritten (px-4 py-4 → p-4); the dynamic child is untouched by a class-only change. This is
+        // the real-app common case (most elements have dynamic content).
+        before: '<div className="px-4 py-4">{x}</div>',
+        after: '<div className="p-4">{x}</div>',
       },
     ],
     // Asymmetric padding (top != bottom) cannot fold into a shorthand → left unchanged.

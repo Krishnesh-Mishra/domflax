@@ -6,7 +6,8 @@
  * {@link import('./define').validatePattern}/{@link Pattern} contract (it never replaces the
  * engine). Authors describe the match as a plain DATA object and the rewrite as a named RECIPE; this
  * module maps each key to the existing matcher combinators and op-draft factories, auto-applies the
- * opacity-barrier and selector-safety guards that every `flatten/*` pattern must carry, and threads
+ * phase-appropriate safety guards (the full opacity-barrier + selector set for `flatten/*`; the
+ * narrower class-rewrite-safety set for `compress/*`) so authors never hand-write them, and threads
  * `doc`/`test` through. Two escape hatches — a `match` predicate and a `rewrite` function — keep
  * exotic patterns (e.g. ones anchored on a parent fragment) expressible.
  *
@@ -54,12 +55,14 @@ import {
   and,
   computed,
   hasDynamicChildren,
+  hasDynamicClasses,
   hasEventHandlers,
   hasOwnVisualStyle,
   hasRef,
   hasSingleElementChild,
   isElement,
   not,
+  opaque,
   targetedByCombinator,
   type Matcher,
 } from './combinators';
@@ -239,6 +242,10 @@ const affectsSelectorMatching: Matcher = (node, ctx) => {
 /**
  * The opacity-barrier + selector-safety guards every `flatten/*` pattern must carry. Auto-applied to
  * the declarative match so authors never hand-write them (the flatten exemplars spell them out).
+ *
+ * Flatten UNWRAPS the element (moving its children into a new parent and dropping its box), so every
+ * opacity barrier matters: a ref, event handler, dynamic child, or raw HTML on the wrapper — or any
+ * selector the reparent would disturb — makes the flatten unsafe.
  */
 const FLATTEN_GUARDS: Matcher = and(
   not(hasRef),
@@ -249,10 +256,35 @@ const FLATTEN_GUARDS: Matcher = and(
   not(affectsSelectorMatching),
 );
 
+/**
+ * The guards every `compress/*` pattern must carry. Compress ONLY ever rewrites the element's OWN
+ * class tokens (e.g. `px-4 py-4 → p-4`) — it never touches the element's structure, children, or
+ * identity. A dynamic `{expr}` child, a ref, an event handler, or `dangerouslySetInnerHTML` is
+ * therefore wholly unaffected by a class-only change, so — unlike flatten — those opacity barriers
+ * must NOT gate compress. Compress is gated ONLY on what actually makes a class rewrite unsafe:
+ *   • a className we can't statically rewrite — a dynamic segment ({@link hasDynamicClasses}) or a
+ *     wholly dynamic / spread-derived list ({@link opaque}); and
+ *   • the selector-safety guard — a class a CSS combinator selector structurally depends on
+ *     ({@link targetedByCombinator}) must not be dropped or rewritten.
+ */
+const COMPRESS_GUARDS: Matcher = and(
+  not(hasDynamicClasses),
+  not(opaque),
+  not(targetedByCombinator),
+);
+
 /* ───────────────────────── match compilation ───────────────────────── */
 
-function isFlattenCategory(category: PassCategory): boolean {
-  return (category.split('/', 1)[0] as PassPhase) === 'flatten';
+/** The auto-applied guard set for a pattern's phase (compress vs flatten get different barriers). */
+function autoGuardsFor(category: PassCategory): Matcher | null {
+  switch (category.split('/', 1)[0] as PassPhase) {
+    case 'flatten':
+      return FLATTEN_GUARDS;
+    case 'compress':
+      return COMPRESS_GUARDS;
+    default:
+      return null;
+  }
 }
 
 function compileDeclarativeMatch(m: DeclarativeMatch): Matcher {
@@ -275,7 +307,8 @@ function compileMatch(
   if (typeof match === 'function') return match;
 
   const declarative = compileDeclarativeMatch(match ?? {});
-  const guarded = isFlattenCategory(category) ? and(declarative, FLATTEN_GUARDS) : declarative;
+  const guards = autoGuardsFor(category);
+  const guarded = guards ? and(declarative, guards) : declarative;
   return (node, ctx) => guarded(node, ctx);
 }
 

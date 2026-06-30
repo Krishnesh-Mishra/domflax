@@ -18,45 +18,16 @@
  *     is NOT the winning `origin` of any declaration across ANY style condition. Such a token can
  *     be deleted with zero effect on the computed style.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic/opaque class lists, and combinator subjects; the `dropClasses` recipe returns the set of
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the `dropClasses` recipe returns the set of
  * fully-overridden, resolver-droppable tokens to delete (their `shadowed` provenance is pruned
  * automatically before the minimal class StyleMap is re-installed).
  */
 
-import type {
-  DeepReadonly,
-  ElementLike,
-  IRElement,
-  IRNode,
-  MatchContext,
-  NodeLike,
-  StyleMap,
-} from '@domflax/core';
+import type { MatchContext, StyleMap } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
-
-/* ───────────────────────── local matchers (barriers the combinators don't expose) ───────────────────────── */
-
-function elementOf(node: NodeLike): DeepReadonly<IRElement> | null {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>) : null;
-}
-
-/** Element renders raw/`dangerouslySetInnerHTML` markup — a hard opacity barrier. */
-const hasDangerousHtml: Matcher = (node) => elementOf(node)?.meta.hasDangerousHtml ?? false;
-
-/** Element's class list is wholly dynamic/spread-derived → we cannot see or splice its tokens. */
-const isOpaque: Matcher = (node, ctx) => ctx.isOpaque(node as ElementLike);
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── provenance analysis ───────────────────────── */
 
@@ -96,20 +67,11 @@ export const dedupeClasses = definePattern({
     before: '<p class="text-sm text-lg" />',
     after: '<p class="text-lg" />',
     safetyRationale:
-      'A fully-overridden token contributes nothing to the computed style in any condition, so ' +
-      'removing it changes no pixels. Dynamic/opaque class lists, ref/handler/dynamic-children/raw-' +
-      'html barriers, combinator subjects, and selector-bound (non-droppable) tokens are excluded.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDangerousHtml),
-      not(hasDynamicClasses),
-      not(isOpaque),
-      not(targetedByCombinator),
-    ],
+      'A fully-overridden token contributes nothing to the computed style in any condition, so removing ' +
+      'it changes no pixels — a class-only change. It is safe even on an element with a ref, event ' +
+      'handler, dynamic child, or dangerouslySetInnerHTML — a className rewrite touches none of them; ' +
+      'only a dynamic/opaque class list or a combinator-subject class is excluded, so no behaviour or ' +
+      'project selector is disturbed.',
   },
   rewrite: {
     dropClasses(computed: StyleMap, ctx: MatchContext): Iterable<string> {

@@ -12,35 +12,16 @@
  * collapses only the block axis and keeps the `left`/`right` longhands verbatim. When nothing
  * collapses (all four distinct, or fewer than a full pair present) the pattern declines.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, and combinator subjects; the `rewriteClasses` recipe rebuilds the class
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the `rewriteClasses` recipe rebuilds the class
  * StyleMap, declining (`null`) unless at least one inset axis collapses.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION_KEY } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  normalizer,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { normalizer, definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── property handles ───────────────────────── */
 
@@ -51,14 +32,6 @@ const LEFT = 'left' as CssProperty;
 const INSET = 'inset' as CssProperty;
 const INSET_BLOCK = 'inset-block' as CssProperty; // top + bottom  (Tailwind inset-y)
 const INSET_INLINE = 'inset-inline' as CssProperty; // left + right (Tailwind inset-x)
-
-/* ───────────────────────── match guards ───────────────────────── */
-
-/** Element sets raw/dangerous HTML (`dangerouslySetInnerHTML`) — a hard opacity barrier. */
-const hasRawHtml: Matcher = (node) => {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>).meta.hasDangerousHtml : false;
-};
 
 /* ───────────────────────── value helpers ───────────────────────── */
 
@@ -101,18 +74,10 @@ export const insetShorthand = definePattern({
     before: '<div style="top:10px;right:10px;bottom:10px;left:10px"/>',
     after: '<div style="inset:10px"/>',
     safetyRationale:
-      'Meaning-preserving shorthand compaction; the element is not a combinator subject and carries ' +
-      'no ref/handlers/dynamic children/raw HTML, so neither selector matching nor behaviour changes.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasRawHtml),
-      not(hasDynamicClasses),
-      not(targetedByCombinator),
-    ],
+      'Meaning-preserving inset shorthand compaction — a class-only change. It is safe even on an element ' +
+      'with a ref, event handler, dynamic child, or dangerouslySetInnerHTML — a className rewrite touches ' +
+      'none of them; only a dynamic/opaque class list or a combinator-subject class is excluded, so no ' +
+      'behaviour or project selector is disturbed.',
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {

@@ -13,36 +13,17 @@
  * both axes carry the SAME value and `!important` flag; an asymmetric pair (`overflow-x !==
  * overflow-y`) has no single-keyword `overflow` equivalent and is declined.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, and combinator subjects (compress patterns get NO auto-guards); the
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the
  * `rewriteClasses` recipe rebuilds the class StyleMap, declining (`null`) unless both overflow axes
  * are present, equal, and share an `!important` flag.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  CssValue,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, CssValue, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── property handles ───────────────────────── */
 
@@ -53,14 +34,6 @@ const OVERFLOW = 'overflow' as CssProperty;
 const BASE_KEY: ConditionKey = conditionKey(BASE_CONDITION);
 
 /* ───────────────────────── helpers ───────────────────────── */
-
-function asElement(node: NodeLike): DeepReadonly<IRElement> | null {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>) : null;
-}
-
-/** Element carries raw/dangerous HTML (e.g. dangerouslySetInnerHTML) — a hard opacity barrier. */
-const hasDangerousHtml: Matcher = (node) => asElement(node)?.meta.hasDangerousHtml ?? false;
 
 /**
  * Rebuild the computed StyleMap with the BASE block's `overflow-x`/`overflow-y` pair replaced by a
@@ -99,19 +72,10 @@ export const overflowShorthand = definePattern({
     before: '<div style="overflow-x:auto;overflow-y:auto"/>',
     after: '<div style="overflow:auto"/>',
     safetyRationale:
-      'A single-keyword `overflow` is value-identical to equal overflow-x+overflow-y; the element ' +
-      'carries no ref/handlers/dynamic children/dangerous HTML, no dynamic class segment, and is ' +
-      'not a combinator subject, so neither behaviour nor any project selector is disturbed.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDangerousHtml),
-      not(hasDynamicClasses),
-      not(targetedByCombinator),
-    ],
+      'A single-keyword `overflow` is value-identical to equal overflow-x+overflow-y — a class-only ' +
+      'change. It is safe even on an element with a ref, event handler, dynamic child, or ' +
+      'dangerouslySetInnerHTML — a className rewrite touches none of them; only a dynamic/opaque class ' +
+      'list or a combinator-subject class is excluded, so no behaviour or project selector is disturbed.',
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {

@@ -66,11 +66,12 @@ const check = (label, cond) => {
   check('real module kept the return statement', out.includes('return ('));
   check('real module kept the {title} hole', out.includes('{title}'));
   // CONSERVATIVE DEFAULT (verify off): the flex-centering wrapper is a `needs-verification` flatten,
-  // so it is PRESERVED — domflax never changes rendering by default — and the child's padding is
-  // kept verbatim (the `{title}` div has a dynamic child, so it is neither flattened nor compressed).
+  // so it is PRESERVED — domflax never changes rendering by default. The `{title}` div has a dynamic
+  // child, so it is NOT flattened — but its OWN class tokens still COMPRESS (px-4 py-4 → p-4): a
+  // class-only rewrite is unaffected by a dynamic child.
   check('real module PRESERVED the flex wrapper (conservative default)', out.includes('justify-center'));
   check('real module did NOT push place-self-center (verify off)', !out.includes('place-self-center'));
-  check('real module preserved child padding (px-4 py-4 not dropped)', out.includes('px-4'));
+  check('real module COMPRESSED dynamic-child div (px-4 py-4 → p-4)', out.includes('p-4') && !out.includes('px-4') && !out.includes('py-4'));
   check('real module kept bg-white', out.includes('bg-white'));
   // The output is a complete module — re-transforming it must not throw.
   let reok = true;
@@ -121,6 +122,16 @@ const check = (label, cond) => {
   check('no leftover px-4', !out.includes('px-4'));
   check('no leftover py-4', !out.includes('py-4'));
   check('preserved bg-white', out.includes('bg-white'));
+}
+
+// 1c) COMPRESS fires on an element with a DYNAMIC child (the real-app common case): a class-only
+//     rewrite cannot affect the child, so `{x}` must not block px-4 py-4 → p-4.
+{
+  const code = '<div className="px-4 py-4">{x}</div>';
+  const { code: out } = createDomflax().transform(code, 'App.tsx');
+  console.log('  [compress dynamic-child] out:', out);
+  check('dynamic-child px-4 py-4 collapsed to p-4', out.includes('p-4') && !out.includes('px-4') && !out.includes('py-4'));
+  check('dynamic child {x} preserved', out.includes('{x}'));
 }
 
 // 2) An onClick wrapper is an opacity barrier — it must NOT flatten.

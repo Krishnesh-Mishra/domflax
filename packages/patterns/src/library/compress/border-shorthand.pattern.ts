@@ -18,35 +18,16 @@
  * `border-x-* border-y-*`) instead of four per-side tokens. Only WIDTH is folded — border style and
  * color are independent longhands the resolver carries separately, so this never disturbs them.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, spread/component identity, and combinator subjects; the `rewriteClasses`
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the `rewriteClasses`
  * recipe rebuilds the class StyleMap, declining (`null`) unless the four widths fold cleanly.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  CssValue,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, CssValue, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── border-width analysis ───────────────────────── */
 
@@ -112,20 +93,6 @@ function analyzeWidth(sm: StyleMap): WidthFold | null {
   return { value, important: top.important, relative };
 }
 
-/* ───────────────────────── match guards ───────────────────────── */
-
-function asElement(node: NodeLike): DeepReadonly<IRElement> | null {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>) : null;
-}
-
-/** Element carries no hard opacity barrier that rewriting its class list could disturb. */
-const isInert: Matcher = (node) => {
-  const el = asElement(node);
-  if (!el) return false;
-  return !el.meta.hasDangerousHtml && !el.meta.hasSpreadAttrs && !el.isComponent;
-};
-
 /* ───────────────────────── style rebuild ───────────────────────── */
 
 /** Rebuild `sm` with the four BASE-block border-width longhands replaced by one shorthand. */
@@ -170,20 +137,11 @@ export const borderShorthand = definePattern({
     before: '<div class="border-t-2 border-r-2 border-b-2 border-l-2"/>',
     after: '<div class="border-2"/>',
     safetyRationale:
-      'A value-preserving re-serialization of the same computed border widths on the same node ' +
-      '(style/color longhands untouched); it skips nodes with ref/handlers/dynamic children/dynamic ' +
-      'classes/dangerous html and combinator subjects, so no JS identity, behaviour, or project ' +
+      'A value-preserving re-serialization of the same computed border widths (style/color longhands ' +
+      'untouched) — a class-only change. It is safe even on an element with a ref, event handler, dynamic ' +
+      'child, or dangerouslySetInnerHTML — a className rewrite touches none of them; only a ' +
+      'dynamic/opaque class list or a combinator-subject class is excluded, so no behaviour or project ' +
       'selector is disturbed.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDynamicClasses),
-      not(targetedByCombinator),
-      isInert,
-    ],
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {

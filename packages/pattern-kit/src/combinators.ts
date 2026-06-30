@@ -12,6 +12,7 @@
 
 import type {
   DeepReadonly,
+  ElementLike,
   IRElement,
   IRNode,
   IRNodeId,
@@ -173,6 +174,17 @@ export const hasDynamicChildren: Matcher = (node) =>
 
 /** Element's class list contains a dynamic segment (template/expr) → not freely rewritable. */
 export const hasDynamicClasses: Matcher = (node) => asElement(node)?.classes.hasDynamic ?? false;
+
+/**
+ * Element's class list is wholly dynamic / spread-derived (`classes.opaque`, or spread attrs) — its
+ * concrete tokens can't be seen or statically rewritten, so a class-rewriting (compress) pattern
+ * must decline. Delegates to the context's authoritative {@link MatchContext.isOpaque}.
+ */
+export const opaque: Matcher = (node, ctx) => {
+  const el = asElement(node);
+  if (!el) return false;
+  return ctx.isOpaque(el as unknown as ElementLike);
+};
 
 /**
  * Element is the subject of a combinator selector (`>`/`+`/`~`). Honours the frontend-set meta

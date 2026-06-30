@@ -13,36 +13,17 @@
  * shorthand), so an element styled with two matching axis utilities keeps the longhands until this
  * pass folds them. When neither pair agrees the pattern declines.
  *
- * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
- * dynamic class lists, and combinator subjects (compress patterns get NO auto-guards); the
+ * Authored with the declarative {@link pattern} API: `definePattern` auto-applies the compress safety guards — a dynamic or opaque class list
+ * and combinator-subject selectors are excluded (a ref / event handler / dynamic child / dangerous
+ * HTML never blocks a class-only rewrite); the
  * `rewriteClasses` recipe rebuilds the class StyleMap, declining (`null`) unless at least one
  * alignment pair collapses.
  */
 
-import type {
-  ConditionKey,
-  CssProperty,
-  CssValue,
-  DeepReadonly,
-  IRElement,
-  IRNode,
-  NodeLike,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-} from '@domflax/core';
+import type { ConditionKey, CssProperty, CssValue, StyleBlock, StyleDecl, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
-import {
-  hasDynamicChildren,
-  hasDynamicClasses,
-  hasEventHandlers,
-  hasRef,
-  not,
-  definePattern,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── property handles ───────────────────────── */
 
@@ -57,14 +38,6 @@ const PLACE_CONTENT = 'place-content' as CssProperty;
 const BASE_KEY: ConditionKey = conditionKey(BASE_CONDITION);
 
 /* ───────────────────────── helpers ───────────────────────── */
-
-function asElement(node: NodeLike): DeepReadonly<IRElement> | null {
-  const n = node as DeepReadonly<IRNode>;
-  return n.kind === 'element' ? (n as DeepReadonly<IRElement>) : null;
-}
-
-/** Element carries raw/dangerous HTML (e.g. dangerouslySetInnerHTML) — a hard opacity barrier. */
-const hasDangerousHtml: Matcher = (node) => asElement(node)?.meta.hasDangerousHtml ?? false;
 
 /** Two alignment decls collapse only if they agree on BOTH normalized value and `!important`. */
 function samePair(a: StyleDecl | undefined, b: StyleDecl | undefined): boolean {
@@ -108,19 +81,10 @@ export const placeShorthand = definePattern({
     before: '<div style="align-items:center;justify-items:center"/>',
     after: '<div style="place-items:center"/>',
     safetyRationale:
-      'A `place-*` shorthand is value-identical to its equal align/justify pair; the element ' +
-      'carries no ref/handlers/dynamic children/dangerous HTML, no dynamic class segment, and is ' +
-      'not a combinator subject, so neither behaviour nor any project selector is disturbed.',
-  },
-  match: {
-    where: [
-      not(hasRef),
-      not(hasEventHandlers),
-      not(hasDynamicChildren),
-      not(hasDangerousHtml),
-      not(hasDynamicClasses),
-      not(targetedByCombinator),
-    ],
+      'A `place-*` shorthand is value-identical to its equal align/justify pair — a class-only change. It ' +
+      'is safe even on an element with a ref, event handler, dynamic child, or dangerouslySetInnerHTML — ' +
+      'a className rewrite touches none of them; only a dynamic/opaque class list or a combinator-subject ' +
+      'class is excluded, so no behaviour or project selector is disturbed.',
   },
   rewrite: {
     rewriteClasses(computed: StyleMap): StyleMap | null {
