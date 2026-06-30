@@ -1,5 +1,5 @@
 /**
- * @domflax/patterns — Stage-1 flatten pattern: `nested-flex-merge`.
+ * @domflax/patterns — flatten pattern: `nested-flex-merge`.
  *
  * Collapses a redundant nesting of two flex containers
  *
@@ -12,35 +12,20 @@
  * box is then structural noise (it paints nothing and only establishes a flex context that the
  * merged child now also establishes), so it is removed.
  *
- * Safety reasoning (why this is sound):
- *   • the outer wrapper paints nothing of its own (`hasOwnVisualStyle` false across every
- *     condition), so removing its box loses no pixels;
- *   • the wrapper declares ONLY flex-container properties (display + flex alignment/gap) plus
- *     inheritable properties — nothing layout-affecting (padding/margin/size/position) that would
- *     be silently lost when its box disappears (`outerMergeSafe`);
- *   • every flex-container property the two share carries the SAME normalized value — i.e. the two
- *     containers do not CONFLICT on any flex property (`flexConflict` is false); otherwise the
- *     merge is ambiguous and we skip;
- *   • the wrapper carries no ref / event handlers / dynamic children (hard opacity barriers) and is
- *     not the subject of a combinator selector; the surviving child is likewise not a combinator
- *     subject, so hoisting it up one level cannot break project CSS;
- *   • inheritable declarations on the wrapper are folded onto the child first, so inherited values
- *     (color, font, …) survive the box removal.
- *
- * Realization: the wrapper's flex-container declarations are merged onto the child (target-wins —
- * the child keeps its own value for any shared property, which is identical anyway since we proved
- * non-conflict), then the wrapper is removed with the structural-safe `unwrap` op, which splices
- * the child into the wrapper's slot and deletes ONLY the wrapper node, preserving the child's
- * IRNodeId (invariant D10).
+ * Authored with the declarative {@link pattern} API: the match is a flex `<div>` with a single
+ * element child painting nothing of its own (auto-guarded against opacity barriers / combinator
+ * targeting like every `flatten/*` pattern). The value-relational reasoning — the child must also
+ * be a (non-combinator) flex container, the wrapper must carry only transferable flex/inheritable
+ * declarations, and the two must not conflict on any shared flex property — lives in the `rewrite`
+ * op-draft factory escape hatch, which folds inherited styles, transfers the wrapper's flex
+ * declarations onto the child (target-wins), then unwraps the wrapper.
  */
 
 import type {
   ConditionKey,
   CssProperty,
   MatchContext,
-  MatchResult,
   NodeLike,
-  Pattern,
   RewriteFactory,
   RewriteOpDraft,
   StyleBlock,
@@ -52,15 +37,10 @@ import { BASE_CONDITION, conditionKey } from '@domflax/core';
 import {
   and,
   computed,
-  definePattern,
-  hasDynamicChildren,
-  hasEventHandlers,
-  hasOwnVisualStyle,
-  hasRef,
-  hasSingleElementChild,
   isElement,
   normalizer,
   not,
+  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -86,8 +66,6 @@ const DISPLAY_FLEX: StyleMap = baseConditionStyleMap([['display', 'flex']]);
 /**
  * The flex-CONTAINER property set this pattern is allowed to transfer from the wrapper onto the
  * child. (Longhands only, since the shared normalizer expands `gap` → `row-gap`/`column-gap`.)
- * Any wrapper declaration outside this set — and not inheritable — makes the wrapper unsafe to
- * remove (its box carries layout/paint that would be lost), so the pattern bails.
  */
 const FLEX_CONTAINER_PROPERTIES: ReadonlySet<string> = new Set<string>([
   'display',
@@ -154,29 +132,19 @@ function extractFlexStyle(sm: StyleMap): StyleMap {
   return { blocks };
 }
 
-/* ───────────────────────── match predicates ───────────────────────── */
-
-/** The outer flex container: a flex `<div>` with a single element child, painting nothing of its own. */
-const isOuterFlex: Matcher = and(
+/** The inner (surviving) flex container: also a flex `<div>`, and not a combinator subject (it is reparented). */
+const isInnerFlex: Matcher = and(
   isElement('div'),
   computed(DISPLAY_FLEX),
-  hasSingleElementChild,
-  not(hasOwnVisualStyle),
-  not(hasRef),
-  not(hasEventHandlers),
-  not(hasDynamicChildren),
   not(targetedByCombinator),
 );
-
-/** The inner (surviving) flex container: also a flex `<div>`, and not a combinator subject (it is reparented). */
-const isInnerFlex: Matcher = and(isElement('div'), computed(DISPLAY_FLEX), not(targetedByCombinator));
 
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /**
  * Flatten a flex container whose sole child is a compatible flex container into a single container.
  */
-export const nestedFlexMerge: Pattern = definePattern({
+export const nestedFlexMerge = pattern({
   name: 'nested-flex-merge',
   category: 'flatten/nested-flex-merge',
   safety: 2,
@@ -195,10 +163,14 @@ export const nestedFlexMerge: Pattern = definePattern({
       'ref/handlers/dynamic children, and is not a combinator subject; the two containers do not ' +
       'conflict on any flex property, so the union is unambiguous and lossless.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
+  match: {
+    tag: 'div',
+    style: { display: 'flex' },
+    onlyChild: 'element',
+    paintsNothing: true,
+  },
+  rewrite: (ctx: MatchContext, rw: RewriteFactory): readonly RewriteOpDraft[] | null => {
     const outer = ctx.node;
-    if (!isOuterFlex(outer as unknown as NodeLike, ctx)) return null;
-
     const inner = ctx.onlyElementChild();
     if (!inner) return null;
     if (!isInnerFlex(inner as unknown as NodeLike, ctx)) return null;
@@ -211,17 +183,33 @@ export const nestedFlexMerge: Pattern = definePattern({
     // … and the two containers must agree on every shared flex property.
     if (flexConflict(outerStyle, innerStyle)) return null;
 
-    const ops: readonly RewriteOpDraft[] = [
+    return [
       // 1. Preserve inheritable values (color/font/…) by folding them onto the child first.
       rw.foldInheritedStyles(outer, inner, { conditions: 'all' }),
-      // 2. Transfer the wrapper's flex-container declarations onto the child. `target-wins` keeps
-      //    the child's value for any shared property (identical anyway — we proved non-conflict),
-      //    and adds the wrapper-only flex properties.
+      // 2. Transfer the wrapper's flex-container declarations onto the child (target-wins keeps the
+      //    child's value for any shared property — identical anyway, we proved non-conflict).
       rw.mergeStyle(inner, null, extractFlexStyle(outerStyle), 'target-wins'),
       // 3. Remove the wrapper (structural-safe; hoists the child and preserves its IRNodeId).
       rw.unwrap(outer),
     ];
-
-    return { ops };
   },
+  examples: [
+    {
+      // The wrapper's flex declarations (align-items / gap) merge onto the inner flex container,
+      // then the wrapper is removed (its own `data-x` here just blocks the more aggressive
+      // passthrough-wrapper so this merge is the one that fires).
+      before:
+        '<div className="flex items-center gap-2" data-x="1">' +
+        '<div className="flex flex-col">X</div>' +
+        '</div>',
+      after: '<div className="flex flex-col gap-2 items-center">X</div>',
+    },
+    {
+      // A non-flex wrapper does not match the flex-container signature → left unchanged.
+      noMatch:
+        '<div className="block bg-blue-500">' +
+        '<div className="flex flex-col">X</div>' +
+        '</div>',
+    },
+  ],
 });

@@ -2,8 +2,9 @@
  * @domflax/patterns — the built-in rewrite pattern library.
  *
  * Re-exports each pattern individually plus a default {@link builtinPatterns} array the
- * orchestrator/pipeline registers into its passes. Stage 1 shipped the single flatten pattern
- * `flex-center-wrapper`; this barrel now registers the full set (flatten then compress).
+ * orchestrator/pipeline registers into its passes. Patterns are authored with the declarative
+ * `pattern()` API from `@domflax/pattern-kit` and live under `flatten/` and `compress/`; this barrel
+ * registers the full set (flatten then compress).
  */
 
 import type { Pattern } from '@domflax/core';

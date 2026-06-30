@@ -1,38 +1,26 @@
 /**
- * @domflax/patterns — Stage-2 compress pattern: `margin-shorthand`.
+ * @domflax/patterns — compress pattern: `margin-shorthand`.
  *
  * Collapses the four explicit margin longhands
  *
  *   margin-top / margin-right / margin-bottom / margin-left
  *
  * back into a single CSS `margin` shorthand declaration on the SAME element (the margin analogue of
- * `padding-shorthand`, covering the `m` / `mx` / `my` collapse). The shared normalizer always
- * *expands* a `margin` shorthand into its four sides at parse time; this compress pass performs the
- * reverse, choosing the shortest legal 1–4-value form:
+ * `padding-shorthand`, covering the `m` / `mx` / `my` collapse), choosing the shortest legal
+ * 1–4-value form:
  *
  *   • all four equal               → `margin: <v>`           (the `m` case)
  *   • top==bottom and left==right  → `margin: <y> <x>`       (the `my`/`mx` case)
  *   • left==right (top!=bottom)    → `margin: <t> <x> <b>`
  *   • otherwise                    → `margin: <t> <r> <b> <l>`
  *
- * It is a pure representation change: the resolved box model is identical (the verifier sees the
- * same computed margins), only the declaration count shrinks from four to one, which the backend
- * can then re-emit as a single shorthand class/utility.
+ * It is a pure representation change: the resolved box model is identical, only the declaration
+ * count shrinks from four to one, which the backend can then re-emit as a single shorthand utility.
  *
- * Safety reasoning (why this is sound):
- *   • the element's margins are unchanged in MEANING — only how they're written changes, so no
- *     pixels move and nothing inheritable is touched;
- *   • we never rewrite a node carrying a hard opacity barrier (ref / event handlers / dynamic
- *     children / dangerous raw html) — its JS identity / behaviour must stay byte-identical;
- *   • we never rewrite a node whose class list has a dynamic segment (the class list is the splice
- *     target — collapsing into it could clobber an author expression);
- *   • we never rewrite a node that is the subject of a combinator selector (`>`/`+`/`~`), so no
- *     project CSS that targets this element by structure is disturbed.
- *
- * Realization: a single `setClassList` op replaces the element's computed StyleMap with one whose
- * base block has the four margin longhands swapped for the collapsed `margin` shorthand. Because the
- * applier stores the StyleMap verbatim (it does not re-normalize), the shorthand survives, and the
- * pattern is idempotent — once collapsed the four longhands are gone, so it never re-fires.
+ * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
+ * dynamic class lists, and combinator subjects; the `rewriteClasses` recipe rebuilds the class
+ * StyleMap, declining (`null`) unless all four margin longhands are present with a uniform
+ * (non-)`!important` flag.
  */
 
 import type {
@@ -42,12 +30,7 @@ import type {
   DeepReadonly,
   IRElement,
   IRNode,
-  MatchContext,
-  MatchResult,
   NodeLike,
-  Pattern,
-  RewriteFactory,
-  RewriteOpDraft,
   StyleBlock,
   StyleDecl,
   StyleMap,
@@ -55,14 +38,12 @@ import type {
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
 import {
-  and,
-  definePattern,
   hasDynamicChildren,
   hasDynamicClasses,
   hasEventHandlers,
   hasRef,
-  isElement,
   not,
+  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -78,6 +59,8 @@ const MARGIN_SIDES = [
 ] as const satisfies readonly string[];
 
 const MARGIN_SIDE_SET: ReadonlySet<string> = new Set(MARGIN_SIDES);
+
+const BASE_KEY: ConditionKey = conditionKey(BASE_CONDITION);
 
 function asElement(node: NodeLike): DeepReadonly<IRElement> | null {
   const n = node as DeepReadonly<IRNode>;
@@ -98,30 +81,30 @@ function collapseMarginValue(top: string, right: string, bottom: string, left: s
   return `${top} ${right} ${bottom} ${left}`;
 }
 
-/* ───────────────────────── match predicate ───────────────────────── */
-
-/**
- * Structural / safety guard: any element that is free of hard opacity barriers, has no dynamic
- * class segment, and is not a combinator subject. The margin-specific shape (all four longhands
- * present) is checked in `evaluate`, where the values are also read.
- */
-const isSafeMarginTarget: Matcher = and(
-  isElement(),
-  not(hasRef),
-  not(hasEventHandlers),
-  not(hasDynamicChildren),
-  not(hasDynamicClasses),
-  not(hasDangerousHtml),
-  not(targetedByCombinator),
-);
+/** Rebuild the computed StyleMap with the four BASE-block margin longhands replaced by `margin`. */
+function withFoldedMargin(sm: StyleMap, marginDecl: StyleDecl): StyleMap {
+  const blocks = new Map<ConditionKey, StyleBlock>();
+  for (const [key, block] of sm.blocks) {
+    if (key !== BASE_KEY) {
+      blocks.set(key, block);
+      continue;
+    }
+    const decls = new Map<CssProperty, StyleDecl>();
+    for (const [prop, decl] of block.decls) {
+      if (!MARGIN_SIDE_SET.has(String(prop))) decls.set(prop, decl);
+    }
+    decls.set(marginDecl.property, marginDecl);
+    blocks.set(key, { condition: block.condition, decls });
+  }
+  return { blocks };
+}
 
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /**
- * The Stage-2 margin-shorthand compress pattern: fold four margin longhands into one `margin`
- * shorthand on the element's base style block.
+ * Fold four margin longhands into one `margin` shorthand on the element's base style block.
  */
-export const marginShorthand: Pattern = definePattern({
+export const marginShorthand = pattern({
   name: 'margin-shorthand',
   category: 'compress/margin-shorthand',
   safety: 2,
@@ -136,58 +119,60 @@ export const marginShorthand: Pattern = definePattern({
       'Pure representation change (no pixels move); skips nodes with ref/handlers/dynamic children/' +
       'raw html, dynamic class segments, or combinator-subject selectors.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
-    const el = ctx.node;
-    if (!isSafeMarginTarget(el as unknown as NodeLike, ctx)) return null;
-
-    const computed = ctx.computed();
-    const baseKey = conditionKey(BASE_CONDITION);
-    const base = computed.blocks.get(baseKey);
-    if (!base) return null;
-
-    // Require all four longhands present in the base block (the `m` collapse only touches base).
-    const sides = MARGIN_SIDES.map((p) => base.decls.get(p as CssProperty));
-    if (sides.some((d) => d === undefined)) return null;
-    const [mt, mr, mb, ml] = sides as readonly StyleDecl[];
-
-    // A shorthand can only carry a uniform `!important`; mixing would change cascade behaviour.
-    if (mt.important || mr.important || mb.important || ml.important) return null;
-
-    const value = collapseMarginValue(
-      String(mt.value),
-      String(mr.value),
-      String(mb.value),
-      String(ml.value),
-    );
-
-    const marginDecl: StyleDecl = {
-      property: 'margin' as CssProperty,
-      value: value as CssValue,
-      important: false,
-      relativeToParent:
-        mt.relativeToParent || mr.relativeToParent || mb.relativeToParent || ml.relativeToParent,
-      inherited: false, // margin is not an inherited property
-    };
-
-    // Rebuild the computed StyleMap: every block verbatim except base, where the four margin
-    // longhands are dropped in favour of the single collapsed shorthand.
-    const blocks = new Map<ConditionKey, StyleBlock>();
-    for (const [key, block] of computed.blocks) {
-      if (key !== baseKey) {
-        blocks.set(key, block);
-        continue;
-      }
-      const decls = new Map<CssProperty, StyleDecl>();
-      for (const [prop, decl] of block.decls) {
-        if (!MARGIN_SIDE_SET.has(String(prop))) decls.set(prop, decl);
-      }
-      decls.set(marginDecl.property, marginDecl);
-      blocks.set(key, { condition: block.condition, decls });
-    }
-
-    const next: StyleMap = { blocks };
-
-    const ops: readonly RewriteOpDraft[] = [rw.setClassList(el, next)];
-    return { ops };
+  match: {
+    where: [
+      not(hasRef),
+      not(hasEventHandlers),
+      not(hasDynamicChildren),
+      not(hasDynamicClasses),
+      not(hasDangerousHtml),
+      not(targetedByCombinator),
+    ],
   },
+  rewrite: {
+    rewriteClasses(computed: StyleMap): StyleMap | null {
+      const base = computed.blocks.get(BASE_KEY);
+      if (!base) return null;
+
+      // Require all four longhands present in the base block (the `m` collapse only touches base).
+      const sides = MARGIN_SIDES.map((p) => base.decls.get(p as CssProperty));
+      if (sides.some((d) => d === undefined)) return null;
+      const [mt, mr, mb, ml] = sides as readonly StyleDecl[];
+
+      // A shorthand can only carry a uniform `!important`; mixing would change cascade behaviour.
+      if (mt.important || mr.important || mb.important || ml.important) return null;
+
+      const value = collapseMarginValue(
+        String(mt.value),
+        String(mr.value),
+        String(mb.value),
+        String(ml.value),
+      );
+
+      const marginDecl: StyleDecl = {
+        property: 'margin' as CssProperty,
+        value: value as CssValue,
+        important: false,
+        relativeToParent:
+          mt.relativeToParent || mr.relativeToParent || mb.relativeToParent || ml.relativeToParent,
+        inherited: false, // margin is not an inherited property
+      };
+
+      return withFoldedMargin(computed, marginDecl);
+    },
+  },
+  examples: [
+    {
+      // The four margin longhands collapse to a `margin` shorthand at the IR level (verified by the
+      // invariant suite). The JSX round-trip is output-identity: the Tailwind resolver's reverse-emit
+      // index is keyed on longhands and is append-only, so a raw `margin` shorthand key maps to no
+      // utility.
+      before: '<div className="mt-2 mr-2 mb-2 ml-2 bg-red-200">box</div>',
+      after: '<div className="mt-2 mr-2 mb-2 ml-2 bg-red-200">box</div>',
+    },
+    {
+      // Only two margin sides set → the four-longhand `margin` collapse does not apply.
+      noMatch: '<div className="mt-2 mb-2 bg-red-200">box</div>',
+    },
+  ],
 });

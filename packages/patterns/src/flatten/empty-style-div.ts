@@ -1,5 +1,5 @@
 /**
- * @domflax/patterns — Stage-1 flatten pattern: `empty-style-div`.
+ * @domflax/patterns — flatten pattern: `empty-style-div`.
  *
  * Collapses the most common piece of structural noise of all: a `<div>` whose ONLY role is to wrap
  * a single child while contributing nothing to layout or paint —
@@ -12,21 +12,11 @@
  * a descendant might read. Its box is therefore indistinguishable from "not being there", so it can
  * be unwrapped into its sole child.
  *
- * Safety reasoning (why this is sound):
- *   • the wrapper paints nothing of its own (`hasOwnVisualStyle` false across every condition);
- *   • it is a plain `display:block` box — it establishes no box / formatting / stacking context and
- *     is not a containing block, so removing it cannot reflow or reparent-paint its descendants;
- *   • it sets no `--*` custom properties a descendant reads (no author-var coupling);
- *   • it carries no ref / event handlers / dynamic children / raw HTML (hard opacity barriers), so no
- *     JS identity or behaviour is attached to the wrapper element;
- *   • it is neither a combinator subject (`>`/`+`/`~`) nor a structural-pseudo target
- *     (:first/:last/:only/:nth-child …), so unwrapping it cannot change any selector's match-set;
- *   • inheritable declarations on the wrapper (color, font, …) are folded onto the child first, so
- *     inherited values survive the box removal.
- *
- * Realization: as with `flex-center-wrapper`, "replace the wrapper with the child" uses the
- * structural-safe `unwrap` op — for a single-element-child wrapper, unwrapping splices the child into
- * the wrapper's slot and deletes ONLY the wrapper node, preserving the child's `IRNodeId` (D10).
+ * Authored with the declarative {@link pattern} API. The opacity-barrier + selector-safety guards
+ * (ref/handlers/dynamic-children/raw-html/combinator/reparent-impact) are applied automatically for
+ * every `flatten/*` pattern; the `where` predicates below add the LAYOUT-neutrality requirements
+ * specific to this pattern (no non-block display, no box/formatting/stacking context, no containing
+ * block, no custom-property coupling, no structural-pseudo targeting).
  */
 
 import type {
@@ -35,29 +25,12 @@ import type {
   IRElement,
   IRNode,
   IRNodeId,
-  MatchContext,
-  MatchResult,
   NodeLike,
   NodeMeta,
-  Pattern,
-  RewriteFactory,
-  RewriteOpDraft,
   StyleMap,
 } from '@domflax/core';
 
-import {
-  and,
-  definePattern,
-  hasDynamicChildren,
-  hasEventHandlers,
-  hasOwnVisualStyle,
-  hasRef,
-  hasSingleElementChild,
-  isElement,
-  not,
-  targetedByCombinator,
-  type Matcher,
-} from '@domflax/pattern-kit';
+import { not, pattern, type Matcher } from '@domflax/pattern-kit';
 
 /* ───────────────────────── local matcher helpers ───────────────────────── */
 
@@ -82,13 +55,11 @@ const establishesStackingContext = metaFlag('establishesStackingContext');
 const isContainingBlock = metaFlag('isContainingBlock');
 /** Wrapper sets `--*` custom properties a descendant reads (author-var coupling). */
 const declaresCustomProperties = metaFlag('declaresCustomProperties');
-/** Wrapper contains raw/dangerous HTML (hard opacity barrier). */
-const hasDangerousHtml = metaFlag('hasDangerousHtml');
 
 /**
  * Wrapper is a structural-pseudo target (:first/:last/:only/:nth-child/-of-type). Honours the
- * frontend-set meta flag and the precomputed {@link SelectorIndex}, exactly like
- * {@link targetedByCombinator}. Unwrapping such a node would change a selector's match-set.
+ * frontend-set meta flag and the precomputed {@link SelectorIndex}. Unwrapping such a node would
+ * change a selector's match-set.
  */
 const targetedByStructuralPseudo: Matcher = (node, ctx) => {
   const el = asEl(node);
@@ -115,40 +86,12 @@ const hasNonBlockDisplay: Matcher = (node, ctx) => {
   return false;
 };
 
-/* ───────────────────────── match predicate ───────────────────────── */
-
-/**
- * A `<div>` whose only role is a layout-neutral wrapper around a single element child: a plain
- * `display:block` box with no own visual style, no box/formatting/stacking context, not a containing
- * block, no custom-property coupling, and free of every opacity / selector-targeting barrier.
- */
-const isEmptyStyleDiv: Matcher = and(
-  isElement('div'),
-  hasSingleElementChild,
-  // layout-neutral: a plain block box that paints & establishes nothing.
-  not(hasNonBlockDisplay),
-  not(hasOwnVisualStyle),
-  not(establishesBox),
-  not(establishesFormattingContext),
-  not(establishesStackingContext),
-  not(isContainingBlock),
-  not(declaresCustomProperties),
-  // hard opacity barriers.
-  not(hasRef),
-  not(hasEventHandlers),
-  not(hasDynamicChildren),
-  not(hasDangerousHtml),
-  // CSS-selector safety: removing the box must not change any selector's match-set.
-  not(targetedByCombinator),
-  not(targetedByStructuralPseudo),
-);
-
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /**
  * Flatten a layout-neutral, style-free `<div>` wrapper into its sole element child.
  */
-export const emptyStyleDiv: Pattern = definePattern({
+export const emptyStyleDiv = pattern({
   name: 'empty-style-div',
   category: 'flatten/empty-style-div',
   safety: 1,
@@ -165,20 +108,29 @@ export const emptyStyleDiv: Pattern = definePattern({
       'ref/handlers/dynamic children/raw HTML, and is neither a combinator subject nor a ' +
       'structural-pseudo target; inheritable styles are folded onto the child before removal.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
-    const wrapper = ctx.node;
-    if (!isEmptyStyleDiv(wrapper as unknown as NodeLike, ctx)) return null;
-
-    const child = ctx.onlyElementChild();
-    if (!child) return null;
-
-    const ops: readonly RewriteOpDraft[] = [
-      // 1. Preserve inheritable values (color/font/…) by folding them onto the child first.
-      rw.foldInheritedStyles(wrapper, child, { conditions: 'all' }),
-      // 2. Replace the wrapper with the child (structural-safe; preserves the child's IRNodeId).
-      rw.unwrap(wrapper),
-    ];
-
-    return { ops };
+  match: {
+    tag: 'div',
+    onlyChild: 'element',
+    paintsNothing: true,
+    where: [
+      not(hasNonBlockDisplay),
+      not(establishesBox),
+      not(establishesFormattingContext),
+      not(establishesStackingContext),
+      not(isContainingBlock),
+      not(declaresCustomProperties),
+      not(targetedByStructuralPseudo),
+    ],
   },
+  rewrite: { flattenInto: 'child' },
+  examples: [
+    {
+      before: '<div><span className="bg-red-200">Hi</span></div>',
+      after: '<span className="bg-red-200">Hi</span>',
+    },
+    {
+      // The wrapper paints its own background (own visual style) → not layout-neutral, kept.
+      noMatch: '<div className="bg-blue-500"><span className="bg-red-200">Hi</span></div>',
+    },
+  ],
 });

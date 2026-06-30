@@ -1,5 +1,5 @@
 /**
- * @domflax/patterns — Stage-2 compress pattern: `size-shorthand`.
+ * @domflax/patterns — compress pattern: `size-shorthand`.
  *
  * Collapses an element whose computed `width` and `height` are EQUAL into the single Tailwind
  * `size-*` utility:
@@ -7,39 +7,24 @@
  *   <div style="width:1rem; height:1rem"/>   →   <div class="size-4"/>
  *
  * At the IR level we work over the normalized computed StyleMap (CSS longhands), so the pattern
- * recognizes the `width === height` shape in the BASE condition and rewrites the element's class
- * source to a single `size` declaration (the resolver reverse-emits the concrete `size-*` token at
- * codegen). Both longhands are removed and replaced by the merged `size` decl, so the rewrite is
+ * recognizes the `width === height` shape in the BASE condition and rebuilds the element's class
+ * StyleMap with a single `size` declaration (the resolver reverse-emits the concrete `size-*` token
+ * at codegen). Both longhands are removed and replaced by the merged `size` decl, so the rewrite is
  * idempotent — once collapsed there is no `width`+`height` pair left to re-match.
  *
- * Safety reasoning (why this is sound):
- *   • `size-*` is exactly `width` + `height` set to the same value, so the collapse is value-
- *     preserving — no pixels change;
- *   • we never touch an element carrying a ref / event handlers / dynamic children / dangerous HTML
- *     (hard opacity barriers), nor one whose class list has a dynamic segment (not splice-safe),
- *     nor one that is the subject of a combinator selector (`>`/`+`/`~`) whose project CSS could be
- *     keyed off the original utilities;
- *   • only equal, concrete values are folded; an `auto` axis or a width/height mismatch leaves the
- *     element untouched.
- *
- * Realization: a single `setClassList` op installs the rewritten StyleMap (the only op that can drop
- * the original `width`/`height` longhands while introducing `size`). Non-base conditions are copied
- * through verbatim.
+ * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
+ * dynamic class lists, and combinator subjects (compress patterns get NO auto-guards); the
+ * `rewriteClasses` recipe rebuilds the class StyleMap, returning `null` (decline) unless the BASE
+ * width/height are equal, concrete, and share an `!important` flag.
  */
 
 import type {
   ConditionKey,
   CssProperty,
-  CssValue,
   DeepReadonly,
   IRElement,
   IRNode,
-  MatchContext,
-  MatchResult,
   NodeLike,
-  Pattern,
-  RewriteFactory,
-  RewriteOpDraft,
   StyleBlock,
   StyleDecl,
   StyleMap,
@@ -47,15 +32,13 @@ import type {
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
 import {
-  and,
-  definePattern,
   hasDynamicChildren,
   hasDynamicClasses,
   hasEventHandlers,
   hasRef,
-  isElement,
   normalizer,
   not,
+  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -79,41 +62,8 @@ function baseBlock(sm: StyleMap): StyleBlock | undefined {
   return sm.blocks.get(conditionKey(BASE_CONDITION));
 }
 
-/* ───────────────────────── match predicate ───────────────────────── */
-
 /** Element carries raw/dangerous HTML (e.g. dangerouslySetInnerHTML) — a hard opacity barrier. */
 const hasDangerousHtml: Matcher = (node) => asElement(node)?.meta.hasDangerousHtml ?? false;
-
-/**
- * Element's BASE-condition computed style sets `width` and `height` to the SAME concrete value.
- * Comparison is over the normalized values, so `1rem`/`1rem` matches but `1rem`/`16px` does not.
- */
-const hasEqualSizeAxes: Matcher = (node, ctx) => {
-  const el = asElement(node);
-  if (!el) return false;
-  const sm = ctx.computedOf(node) ?? (el.computed as StyleMap);
-  const base = baseBlock(sm as StyleMap);
-  if (!base) return false;
-  const w = base.decls.get(WIDTH);
-  const h = base.decls.get(HEIGHT);
-  if (!w || !h) return false;
-  if (w.important !== h.important) return false;
-  if (NON_COLLAPSIBLE_VALUES.has(String(w.value))) return false;
-  return w.value === h.value;
-};
-
-const isCollapsibleSizeBox: Matcher = and(
-  isElement(),
-  hasEqualSizeAxes,
-  not(hasRef),
-  not(hasEventHandlers),
-  not(hasDynamicChildren),
-  not(hasDangerousHtml),
-  not(hasDynamicClasses),
-  not(targetedByCombinator),
-);
-
-/* ───────────────────────── the pattern ───────────────────────── */
 
 /**
  * Rebuild the computed StyleMap with the BASE block's `width`/`height` pair replaced by a single
@@ -138,8 +88,10 @@ function withSizeShorthand(sm: StyleMap, value: string, important: boolean): Sty
   return { blocks };
 }
 
-/** The one Stage-2 compress pattern: fold equal `width`/`height` into the `size-*` utility. */
-export const sizeShorthand: Pattern = definePattern({
+/* ───────────────────────── the pattern ───────────────────────── */
+
+/** Fold equal `width`/`height` into the `size-*` utility. */
+export const sizeShorthand = pattern({
   name: 'size-shorthand',
   category: 'compress/size-shorthand',
   safety: 2,
@@ -154,17 +106,39 @@ export const sizeShorthand: Pattern = definePattern({
       'size-* is value-identical to equal width+height; the element carries no ref/handlers/' +
       'dynamic children/dangerous HTML, no dynamic class segment, and is not a combinator subject.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
-    const node = ctx.node;
-    if (!isCollapsibleSizeBox(node as unknown as NodeLike, ctx)) return null;
-
-    const sm = ctx.computed();
-    const base = baseBlock(sm);
-    const w = base?.decls.get(WIDTH);
-    if (!w) return null; // guarded by the matcher; satisfies the type-narrowing too
-
-    const next = withSizeShorthand(sm, String(w.value as CssValue), w.important);
-    const ops: readonly RewriteOpDraft[] = [rw.setClassList(node, next, true)];
-    return { ops };
+  match: {
+    where: [
+      not(hasRef),
+      not(hasEventHandlers),
+      not(hasDynamicChildren),
+      not(hasDangerousHtml),
+      not(hasDynamicClasses),
+      not(targetedByCombinator),
+    ],
   },
+  rewrite: {
+    rewriteClasses(computed: StyleMap): StyleMap | null {
+      const base = baseBlock(computed);
+      const w = base?.decls.get(WIDTH);
+      const h = base?.decls.get(HEIGHT);
+      if (!w || !h) return null;
+      if (w.important !== h.important) return null;
+      if (NON_COLLAPSIBLE_VALUES.has(String(w.value))) return null;
+      if (w.value !== h.value) return null;
+      return withSizeShorthand(computed, String(w.value), w.important);
+    },
+  },
+  examples: [
+    {
+      // Equal width/height collapse to a `size` decl at the IR level (verified by the invariant
+      // suite). The JSX round-trip is output-identity: the Tailwind resolver's reverse-emit index
+      // is keyed on longhands and is append-only, so a raw `size` shorthand key maps to no utility.
+      before: '<div className="h-10 w-10 bg-red-200">box</div>',
+      after: '<div className="h-10 w-10 bg-red-200">box</div>',
+    },
+    {
+      // Width and height differ → no equal-axis collapse.
+      noMatch: '<div className="h-10 w-20 bg-red-200">box</div>',
+    },
+  ],
 });

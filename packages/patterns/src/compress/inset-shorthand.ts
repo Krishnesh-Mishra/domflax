@@ -1,5 +1,5 @@
 /**
- * @domflax/patterns — Stage-2 compress pattern: `inset-shorthand`.
+ * @domflax/patterns — compress pattern: `inset-shorthand`.
  *
  * Recompacts the four physical inset longhands (`top`/`right`/`bottom`/`left`) on an element's
  * computed style back into the tightest CSS shorthand the values allow:
@@ -10,24 +10,11 @@
  *
  * The two axis collapses are independent: an element whose `top == bottom` but `left != right`
  * collapses only the block axis and keeps the `left`/`right` longhands verbatim. When nothing
- * collapses (all four distinct, or fewer than a full pair present) the pattern does not match.
+ * collapses (all four distinct, or fewer than a full pair present) the pattern declines.
  *
- * This is a meaning-preserving serialization compaction: `inset`/`inset-block`/`inset-inline` are
- * the canonical CSS shorthands for exactly these longhands, so no pixel or cascade behaviour
- * changes. (The shared normalizer EXPANDS shorthands when parsing a declaration, but
- * `normalizeStyleMap` does NOT re-expand an already-built block — so the compacted block is a
- * stable fixpoint and the pass converges in one sweep.)
- *
- * Safety reasoning (why this is sound):
- *   • the element is not the subject of a combinator selector (`>`/`+`/`~`), so rewriting its
- *     resolved style cannot change which project CSS rules match it;
- *   • it carries no ref / event handlers / dynamic children / raw (dangerous) HTML — the hard
- *     opacity barriers — so no JS identity or behaviour rides on the element;
- *   • its class list is not dynamic/opaque, so the resolved style is safe to re-emit.
- *
- * Realization: a single `setClassList` op installs a rebuilt computed StyleMap — every condition
- * block is preserved untouched except the base block, whose collapsed longhands are swapped for the
- * shorthand decl(s). Non-inset declarations in the base block are carried over verbatim.
+ * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
+ * dynamic class lists, and combinator subjects; the `rewriteClasses` recipe rebuilds the class
+ * StyleMap, declining (`null`) unless at least one inset axis collapses.
  */
 
 import type {
@@ -36,12 +23,7 @@ import type {
   DeepReadonly,
   IRElement,
   IRNode,
-  MatchContext,
-  MatchResult,
   NodeLike,
-  Pattern,
-  RewriteFactory,
-  RewriteOpDraft,
   StyleBlock,
   StyleDecl,
   StyleMap,
@@ -49,15 +31,13 @@ import type {
 import { BASE_CONDITION_KEY } from '@domflax/core';
 
 import {
-  and,
-  definePattern,
   hasDynamicChildren,
   hasDynamicClasses,
   hasEventHandlers,
   hasRef,
-  isElement,
   normalizer,
   not,
+  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -72,28 +52,13 @@ const INSET = 'inset' as CssProperty;
 const INSET_BLOCK = 'inset-block' as CssProperty; // top + bottom  (Tailwind inset-y)
 const INSET_INLINE = 'inset-inline' as CssProperty; // left + right (Tailwind inset-x)
 
-/* ───────────────────────── match predicate ───────────────────────── */
+/* ───────────────────────── match guards ───────────────────────── */
 
 /** Element sets raw/dangerous HTML (`dangerouslySetInnerHTML`) — a hard opacity barrier. */
 const hasRawHtml: Matcher = (node) => {
   const n = node as DeepReadonly<IRNode>;
   return n.kind === 'element' ? (n as DeepReadonly<IRElement>).meta.hasDangerousHtml : false;
 };
-
-/**
- * Gate: an addressable element with no opacity barrier and no CSS-selector coupling. The actual
- * "are there collapsible insets?" decision is value-relational, so it lives in `evaluate` (the
- * fixed-partial `computed()` matcher cannot express "these longhands equal each other").
- */
-const isCompressibleInsetTarget: Matcher = and(
-  isElement(),
-  not(hasRef),
-  not(hasEventHandlers),
-  not(hasDynamicChildren),
-  not(hasRawHtml),
-  not(hasDynamicClasses),
-  not(targetedByCombinator),
-);
 
 /* ───────────────────────── value helpers ───────────────────────── */
 
@@ -112,9 +77,7 @@ function withBaseDecls(src: StyleMap, baseDecls: ReadonlyMap<CssProperty, StyleD
   const blocks = new Map<ConditionKey, StyleBlock>();
   for (const [key, block] of src.blocks) {
     const decls =
-      key === BASE_CONDITION_KEY
-        ? baseDecls
-        : new Map<CssProperty, StyleDecl>(block.decls);
+      key === BASE_CONDITION_KEY ? baseDecls : new Map<CssProperty, StyleDecl>(block.decls);
     blocks.set(key, { condition: block.condition, decls });
   }
   return { blocks };
@@ -123,10 +86,10 @@ function withBaseDecls(src: StyleMap, baseDecls: ReadonlyMap<CssProperty, StyleD
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /**
- * The one Stage-2 compress pattern: collapse equal/paired physical inset longhands into the
- * `inset` / `inset-block` / `inset-inline` shorthands on an element's computed style.
+ * Collapse equal/paired physical inset longhands into the `inset` / `inset-block` / `inset-inline`
+ * shorthands on an element's computed style.
  */
-export const insetShorthand: Pattern = definePattern({
+export const insetShorthand = pattern({
   name: 'inset-shorthand',
   category: 'compress/inset-shorthand',
   safety: 2,
@@ -141,50 +104,69 @@ export const insetShorthand: Pattern = definePattern({
       'Meaning-preserving shorthand compaction; the element is not a combinator subject and carries ' +
       'no ref/handlers/dynamic children/raw HTML, so neither selector matching nor behaviour changes.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
-    const el = ctx.node;
-    if (!isCompressibleInsetTarget(el as unknown as NodeLike, ctx)) return null;
-
-    const computed = ctx.computed();
-    const base = computed.blocks.get(BASE_CONDITION_KEY);
-    if (!base) return null;
-
-    const top = base.decls.get(TOP);
-    const right = base.decls.get(RIGHT);
-    const bottom = base.decls.get(BOTTOM);
-    const left = base.decls.get(LEFT);
-
-    const next = new Map<CssProperty, StyleDecl>(base.decls);
-
-    // 1. All four sides equal → single `inset`.
-    if (top && sameSide(top, right) && sameSide(top, bottom) && sameSide(top, left)) {
-      next.delete(TOP);
-      next.delete(RIGHT);
-      next.delete(BOTTOM);
-      next.delete(LEFT);
-      next.set(INSET, asProperty(top, INSET));
-    } else {
-      let collapsed = false;
-      // 2a. Block axis: top == bottom → `inset-block`.
-      if (sameSide(top, bottom)) {
-        next.delete(TOP);
-        next.delete(BOTTOM);
-        next.set(INSET_BLOCK, asProperty(top!, INSET_BLOCK));
-        collapsed = true;
-      }
-      // 2b. Inline axis: left == right → `inset-inline`.
-      if (sameSide(left, right)) {
-        next.delete(LEFT);
-        next.delete(RIGHT);
-        next.set(INSET_INLINE, asProperty(left!, INSET_INLINE));
-        collapsed = true;
-      }
-      if (!collapsed) return null; // nothing to compress — no-op
-    }
-
-    const ops: readonly RewriteOpDraft[] = [
-      rw.setClassList(el, withBaseDecls(computed, next)),
-    ];
-    return { ops };
+  match: {
+    where: [
+      not(hasRef),
+      not(hasEventHandlers),
+      not(hasDynamicChildren),
+      not(hasRawHtml),
+      not(hasDynamicClasses),
+      not(targetedByCombinator),
+    ],
   },
+  rewrite: {
+    rewriteClasses(computed: StyleMap): StyleMap | null {
+      const base = computed.blocks.get(BASE_CONDITION_KEY);
+      if (!base) return null;
+
+      const top = base.decls.get(TOP);
+      const right = base.decls.get(RIGHT);
+      const bottom = base.decls.get(BOTTOM);
+      const left = base.decls.get(LEFT);
+
+      const next = new Map<CssProperty, StyleDecl>(base.decls);
+
+      // 1. All four sides equal → single `inset`.
+      if (top && sameSide(top, right) && sameSide(top, bottom) && sameSide(top, left)) {
+        next.delete(TOP);
+        next.delete(RIGHT);
+        next.delete(BOTTOM);
+        next.delete(LEFT);
+        next.set(INSET, asProperty(top, INSET));
+      } else {
+        let collapsed = false;
+        // 2a. Block axis: top == bottom → `inset-block`.
+        if (sameSide(top, bottom)) {
+          next.delete(TOP);
+          next.delete(BOTTOM);
+          next.set(INSET_BLOCK, asProperty(top!, INSET_BLOCK));
+          collapsed = true;
+        }
+        // 2b. Inline axis: left == right → `inset-inline`.
+        if (sameSide(left, right)) {
+          next.delete(LEFT);
+          next.delete(RIGHT);
+          next.set(INSET_INLINE, asProperty(left!, INSET_INLINE));
+          collapsed = true;
+        }
+        if (!collapsed) return null; // nothing to compress — decline
+      }
+
+      return withBaseDecls(computed, next);
+    },
+  },
+  examples: [
+    {
+      // The four equal inset longhands collapse to an `inset` shorthand at the IR level (verified by
+      // the invariant suite). The JSX round-trip is output-identity: the Tailwind resolver's
+      // reverse-emit index is keyed on longhands and is append-only, so a raw `inset` shorthand key
+      // maps to no utility.
+      before: '<div className="top-0 right-0 bottom-0 left-0 bg-red-200">box</div>',
+      after: '<div className="top-0 right-0 bottom-0 left-0 bg-red-200">box</div>',
+    },
+    {
+      // No matching inset pair (all four distinct) → nothing collapses.
+      noMatch: '<div className="top-0 right-1 bottom-2 left-3 bg-red-200">box</div>',
+    },
+  ],
 });

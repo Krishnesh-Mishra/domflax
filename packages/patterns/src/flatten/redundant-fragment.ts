@@ -1,5 +1,5 @@
 /**
- * @domflax/patterns — Stage-1 flatten pattern: `redundant-fragment`.
+ * @domflax/patterns — flatten pattern: `redundant-fragment`.
  *
  * Collapses a fragment that wraps exactly one child
  *
@@ -9,28 +9,11 @@
  * is pure structural noise: splicing the child up into the fragment's slot is invisible in both
  * the rendered DOM and the project's CSS cascade.
  *
- * Safety reasoning (why this is sound):
- *   • the fragment establishes no box / paints nothing (fragments have no `computed` style at all),
- *     so removing it loses no pixels and folds no styles;
- *   • it carries exactly ONE child, so unwrapping does NOT change the child's sibling set in the
- *     parent — `:first/last/only-child`, `>`/`+`/`~` match-sets for the child and its (absent)
- *     siblings are preserved;
- *   • it is not a keyed fragment (`<Fragment key>`), carries no ref / event handlers / dynamic
- *     children / dangerous HTML / spread / component identity — the hard opacity barriers that would
- *     attach JS identity or behaviour to the fragment element;
- *   • neither the fragment nor its reparented child is a combinator / structural-pseudo selector
- *     subject, and the SelectorIndex reports no `reparentImpact` — so no project CSS targeting moves.
- *
  * Anchoring: the pass manager only visits ELEMENT nodes (see core's `elementIds`), never fragments,
  * so this pattern is anchored on the fragment's sole *element* child and removes the PARENT fragment.
- * (A fragment whose only child is a text/expr/comment node is consequently left alone — the common,
- * load-bearing case is a fragment wrapping a single element.)
- *
- * Realization: "replace the fragment with the child" is performed with the structural-safe `unwrap`
- * op — for a single-child fragment, unwrapping splices the child into the fragment's slot and deletes
- * ONLY the fragment node, preserving the child's `IRNodeId` (invariant D10). (`replaceWith` +
- * `keep(child)` cannot be used: the applier's `replaceWith` calls `removeSubtree` on the fragment,
- * which would also delete the still-parented child.)
+ * Because the match is PARENT-anchored (and reads a fragment's `meta`, which the element-only
+ * combinator vocabulary cannot inspect), it uses the declarative API's two escape hatches: a raw
+ * `match` predicate and a raw `rewrite` op-draft factory.
  */
 
 import type {
@@ -39,26 +22,20 @@ import type {
   IRNode,
   IRNodeId,
   MatchContext,
-  MatchResult,
   NodeLike,
-  Pattern,
   RewriteFactory,
   RewriteOpDraft,
 } from '@domflax/core';
 
-import { and, definePattern, isElement, type Matcher } from '@domflax/pattern-kit';
+import { pattern } from '@domflax/pattern-kit';
 
-/* ───────────────────────── match predicate ───────────────────────── */
+/* ───────────────────────── match predicate (escape hatch) ───────────────────────── */
 
 /**
  * Matches an element whose PARENT is a redundant, unwrappable fragment: a non-root fragment with
  * exactly one child (this element), free of every opacity barrier and CSS-targeting coupling.
- *
- * The fragment's barriers/targeting are read directly off the parent's `meta` + the SelectorIndex —
- * the combinator-vocabulary matchers (`hasRef`, `targetedByCombinator`, …) only inspect ELEMENT
- * nodes, so they cannot reason about a fragment passed as the anchor.
  */
-const parentIsRedundantFragment: Matcher = (node, ctx) => {
+function parentIsRedundantFragment(node: NodeLike, ctx: MatchContext): boolean {
   const el = node as DeepReadonly<IRNode>;
   if (el.kind !== 'element') return false;
 
@@ -99,10 +76,7 @@ const parentIsRedundantFragment: Matcher = (node, ctx) => {
   if (ctx.selectors.reparentImpact(fid).size > 0) return false;
 
   return true;
-};
-
-/** Anchor on any element whose parent is a redundant fragment. */
-const isRedundantFragmentChild: Matcher = and(isElement(), parentIsRedundantFragment);
+}
 
 /* ───────────────────────── the pattern ───────────────────────── */
 
@@ -111,7 +85,7 @@ const isRedundantFragmentChild: Matcher = and(isElement(), parentIsRedundantFrag
  *
  * Safety level 1 (`safe`): a purely structural, style-free, selector-transparent cleanup.
  */
-export const redundantFragment: Pattern = definePattern({
+export const redundantFragment = pattern({
   name: 'redundant-fragment',
   category: 'flatten/redundant-fragment',
   safety: 1,
@@ -127,20 +101,24 @@ export const redundantFragment: Pattern = definePattern({
       'no sibling/structural-pseudo match-set. Keyed fragments and fragments carrying ' +
       'ref/handlers/dynamic-children/raw-html/spread are excluded as opacity barriers.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
-    const child = ctx.node;
-    if (!isRedundantFragmentChild(child as unknown as NodeLike, ctx)) return null;
-
-    const parentId = child.parent;
+  match: parentIsRedundantFragment,
+  rewrite: (ctx: MatchContext, rw: RewriteFactory): readonly RewriteOpDraft[] | null => {
+    const parentId = ctx.node.parent;
     if (parentId == null) return null;
     const fragment = ctx.doc.nodes.get(parentId);
     if (!fragment || fragment.kind !== 'fragment') return null;
-
-    const ops: readonly RewriteOpDraft[] = [
-      // Splice the sole child up into the fragment's slot, deleting ONLY the fragment node.
-      rw.unwrap(fragment as unknown as ElementLike),
-    ];
-
-    return { ops };
+    // Splice the sole child up into the fragment's slot, deleting ONLY the fragment node.
+    return [rw.unwrap(fragment as unknown as ElementLike)];
   },
+  examples: [
+    {
+      before: '<><span className="bg-red-200">Hi</span></>',
+      after: '<span className="bg-red-200">Hi</span>',
+    },
+    {
+      // Two children ⇒ not a single-child fragment, so the fragment is load-bearing and stays.
+      noMatch:
+        '<><span className="bg-red-200">A</span><span className="bg-green-200">B</span></>',
+    },
+  ],
 });

@@ -1,5 +1,5 @@
 /**
- * @domflax/patterns — Stage-1 compress pattern: `padding-shorthand`.
+ * @domflax/patterns — compress pattern: `padding-shorthand`.
  *
  * Collapses an element whose four padding sides are expressed as separate longhand declarations
  * back into the shortest equivalent shorthand:
@@ -13,21 +13,10 @@
  * The IR's computed StyleMap is canonically LONGHAND (the shared normalizer expands every box
  * shorthand at parse time). This pass runs the expansion in reverse on the computed map ONLY when
  * the four sides fold cleanly into a 1- or 2-value form — i.e. `top===bottom` AND `left===right`.
- * The resulting `padding` declaration is what the backend's reverse-emit turns into the minimal
- * `p-*` / `px-* py-*` class set. Because the rewrite removes the four longhands and introduces a
- * single `padding` decl, the matcher cannot re-fire on the result, so the compress fixpoint
- * converges in one sweep (no oscillation).
  *
- * Safety reasoning (why this is sound):
- *   • it is a pure, value-preserving re-serialization of the SAME computed styles on the SAME node
- *     — no box is removed and no pixel changes, so it is a low-safety (level 1) rewrite;
- *   • it refuses to touch nodes carrying a ref / event handlers / dynamic children / dangerous raw
- *     HTML / spread attrs / component identity (hard opacity barriers) — rewriting the class list of
- *     such a node could disturb attached JS identity or behaviour;
- *   • it refuses nodes whose class list has a dynamic segment (`hasDynamicClasses`) — those are not
- *     splice-safe to re-author;
- *   • it refuses combinator-subject nodes (`targetedByCombinator`) so it never rewrites a class that
- *     a project `>`/`+`/`~` selector targets (CSS-selector-safety, mirroring the flatten exemplar).
+ * Authored with the declarative {@link pattern} API: the `where` guards exclude opacity barriers,
+ * dynamic class lists, spread/component identity, and combinator subjects; the `rewriteClasses`
+ * recipe rebuilds the class StyleMap, declining (`null`) unless the four sides fold cleanly.
  */
 
 import type {
@@ -37,12 +26,7 @@ import type {
   DeepReadonly,
   IRElement,
   IRNode,
-  MatchContext,
-  MatchResult,
   NodeLike,
-  Pattern,
-  RewriteFactory,
-  RewriteOpDraft,
   StyleBlock,
   StyleDecl,
   StyleMap,
@@ -50,14 +34,12 @@ import type {
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 
 import {
-  and,
-  definePattern,
   hasDynamicChildren,
   hasDynamicClasses,
   hasEventHandlers,
   hasRef,
-  isElement,
   not,
+  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -86,8 +68,7 @@ interface PaddingFold {
 /**
  * Inspect the BASE-condition block of `sm` and, iff all four padding longhands are present, share a
  * uniform `!important` flag, and form matching x/y pairs (`top===bottom` AND `left===right`), return
- * the shortest equivalent shorthand value. Returns `null` when the sides cannot fold (asymmetric
- * padding, missing side, mixed importance, or padding split across non-base conditions).
+ * the shortest equivalent shorthand value. Returns `null` when the sides cannot fold.
  */
 function analyzePadding(sm: StyleMap): PaddingFold | null {
   const block = sm.blocks.get(BASE_KEY);
@@ -125,7 +106,7 @@ function analyzePadding(sm: StyleMap): PaddingFold | null {
   return { value, important: top.important, relative };
 }
 
-/* ───────────────────────── match predicate ───────────────────────── */
+/* ───────────────────────── match guards ───────────────────────── */
 
 /** Element carries no hard opacity barrier that rewriting its class list could disturb. */
 const isInert: Matcher = (node) => {
@@ -134,24 +115,6 @@ const isInert: Matcher = (node) => {
   const el = n as DeepReadonly<IRElement>;
   return !el.meta.hasDangerousHtml && !el.meta.hasSpreadAttrs && !el.isComponent;
 };
-
-/** The element's computed BASE block folds cleanly into a `padding` shorthand. */
-const hasCollapsiblePadding: Matcher = (node, ctx) => {
-  const n = node as DeepReadonly<IRNode>;
-  if (n.kind !== 'element') return false;
-  return analyzePadding(ctx.computedOf(node)) != null;
-};
-
-const isPaddingShorthandTarget: Matcher = and(
-  isElement(),
-  not(hasRef),
-  not(hasEventHandlers),
-  not(hasDynamicChildren),
-  not(hasDynamicClasses),
-  not(targetedByCombinator),
-  isInert,
-  hasCollapsiblePadding,
-);
 
 /* ───────────────────────── style rebuild ───────────────────────── */
 
@@ -186,7 +149,7 @@ function withFoldedPadding(sm: StyleMap, fold: PaddingFold): StyleMap {
 /**
  * Compress an element's four equal/paired padding longhands into the shortest `padding` shorthand.
  */
-export const paddingShorthand: Pattern = definePattern({
+export const paddingShorthand = pattern({
   name: 'padding-shorthand',
   category: 'compress/padding-shorthand',
   safety: 1,
@@ -202,15 +165,34 @@ export const paddingShorthand: Pattern = definePattern({
       'nodes with ref/handlers/dynamic children/dynamic classes/dangerous html and combinator ' +
       'subjects, so no JS identity, behaviour, or project selector is disturbed.',
   },
-  evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
-    const el = ctx.node;
-    if (!isPaddingShorthandTarget(el as unknown as NodeLike, ctx)) return null;
-
-    const fold = analyzePadding(ctx.computed());
-    if (!fold) return null;
-
-    const style = withFoldedPadding(ctx.computed(), fold);
-    const ops: readonly RewriteOpDraft[] = [rw.setClassList(el, style, true)];
-    return { ops };
+  match: {
+    where: [
+      not(hasRef),
+      not(hasEventHandlers),
+      not(hasDynamicChildren),
+      not(hasDynamicClasses),
+      not(targetedByCombinator),
+      isInert,
+    ],
   },
+  rewrite: {
+    rewriteClasses(computed: StyleMap): StyleMap | null {
+      const fold = analyzePadding(computed);
+      return fold ? withFoldedPadding(computed, fold) : null;
+    },
+  },
+  examples: [
+    {
+      // The four equal padding longhands collapse to a `padding` shorthand at the IR level (verified
+      // by the invariant suite). The JSX round-trip is output-identity: the Tailwind resolver's
+      // reverse-emit index is keyed on longhands and is append-only, so a raw `padding` shorthand
+      // key maps to no utility.
+      before: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
+      after: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
+    },
+    {
+      // Asymmetric padding (top != bottom) cannot fold into a shorthand.
+      noMatch: '<div className="pt-2 pr-4 pb-8 pl-4 bg-red-200">box</div>',
+    },
+  ],
 });
