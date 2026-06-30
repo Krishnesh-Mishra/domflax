@@ -169,6 +169,79 @@ function classFormOf(node: BabelNode): ClassListForm {
   }
 }
 
+/**
+ * Find the OUTERMOST JSXElement/JSXFragment nodes that a dynamic expression renders, so the frontend
+ * can lower JSX nested inside `{…}` holes — `.map`/`.filter`/`.forEach((x) => <jsx/>)` callbacks,
+ * `&&`/`||` logical expressions, ternaries, and parenthesized/cast wrappers — into REAL IR element
+ * nodes. The dynamic scaffolding around them (the call itself, the conditions, `{expr}` holes) stays
+ * opaque; only the renderable JSX is surfaced so the pass manager descends into and optimizes it.
+ *
+ * Only the outermost JSX is collected: {@link buildElement}/{@link buildFragment} recurse into the
+ * descendants themselves, so we must NOT descend past a JSX boundary here (that would double-register
+ * inner elements).
+ */
+function findNestedJsxRoots(root: BabelNode): (JSXElement | JSXFragment)[] {
+  const out: (JSXElement | JSXFragment)[] = [];
+  const seen = new Set<BabelNode>();
+
+  const visit = (n: BabelNode | null | undefined): void => {
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    switch (n.type) {
+      case 'JSXElement':
+      case 'JSXFragment':
+        out.push(n); // outermost renderable JSX — buildElement/buildFragment recurse from here
+        return;
+      case 'ParenthesizedExpression':
+      case 'TSNonNullExpression':
+      case 'TSAsExpression':
+      case 'TSSatisfiesExpression':
+      case 'TSTypeAssertion':
+        visit(n.expression);
+        return;
+      case 'LogicalExpression':
+        visit(n.left);
+        visit(n.right);
+        return;
+      case 'ConditionalExpression':
+        visit(n.consequent);
+        visit(n.alternate);
+        return;
+      case 'SequenceExpression':
+        for (const e of n.expressions) visit(e);
+        return;
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        // `.map`/`.filter`/`.forEach(cb)` etc. — descend into the call arguments (the callbacks),
+        // never the callee (that is the `items.map` member access, which renders nothing).
+        for (const a of n.arguments) visit(a as BabelNode);
+        return;
+      case 'ArrowFunctionExpression':
+      case 'FunctionExpression':
+        visit(n.body);
+        return;
+      case 'BlockStatement':
+        for (const s of n.body) visit(s);
+        return;
+      case 'ReturnStatement':
+        visit(n.argument);
+        return;
+      case 'IfStatement':
+        visit(n.consequent);
+        visit(n.alternate);
+        return;
+      case 'ArrayExpression':
+        for (const el of n.elements) visit(el as BabelNode);
+        return;
+      default:
+        return;
+    }
+  };
+
+  visit(root);
+  return out;
+}
+
 /* ───────────────────────── the frontend ───────────────────────── */
 
 function looksLikeJsx(id: string, code: string): boolean {
@@ -310,7 +383,15 @@ function doParse(code: string, ctx: FrontendParseContext): ParseResult {
 
   /* ----- node builders ----- */
 
-  const buildChild = (node: JSXElement['children'][number], parentId: IRNodeId): IRNodeId | null => {
+  const buildNestedRoot = (jsx: JSXElement | JSXFragment, parentId: IRNodeId): IRNodeId =>
+    jsx.type === 'JSXFragment' ? buildFragment(jsx, parentId) : buildElement(jsx, parentId);
+
+  /** Lower a single JSX child, appending the resulting IR node id(s) onto `out`. */
+  const appendChild = (
+    node: JSXElement['children'][number],
+    parentId: IRNodeId,
+    out: IRNodeId[],
+  ): void => {
     switch (node.type) {
       case 'JSXText': {
         const id = doc.alloc.next();
@@ -322,37 +403,55 @@ function doParse(code: string, ctx: FrontendParseContext): ParseResult {
             collapsible: /^\s*$/.test(node.value),
           }),
         );
-        return id;
+        out.push(id);
+        return;
       }
       case 'JSXExpressionContainer': {
-        if (node.expression.type === 'JSXEmptyExpression') return null; // `{/* comment */}`
+        const expr = node.expression;
+        if (expr.type === 'JSXEmptyExpression') return; // `{/* comment */}`
+        // A container whose WHOLE expression is a JSX node (`{<X/>}`) renders that node directly —
+        // lower it as a real element so passes can optimize it (no opaque wrapper needed).
+        if (expr.type === 'JSXElement' || expr.type === 'JSXFragment') {
+          out.push(buildNestedRoot(expr, parentId));
+          return;
+        }
+        // Otherwise the expression itself stays OPAQUE — the `.map`/condition/`{expr}` hole is
+        // interned and preserved verbatim by the backend …
         const id = doc.alloc.next();
-        const ref = internExpr(node.expression, false);
+        const ref = internExpr(expr, false);
         doc.nodes.set(id, createExpr(id, ref, { parent: parentId, span: spanOf(node) }));
-        return id;
+        out.push(id);
+        // … but any JSX nested INSIDE it (map/filter callbacks, `&&`/`||`, ternary, parens) is
+        // lowered to real element nodes (with their true source spans) so the pass manager descends
+        // into and optimizes them too.
+        for (const jsx of findNestedJsxRoots(expr)) out.push(buildNestedRoot(jsx, parentId));
+        return;
       }
       case 'JSXSpreadChild': {
         const id = doc.alloc.next();
         const ref = internExpr(node.expression, true);
         doc.nodes.set(id, createExpr(id, ref, { parent: parentId, span: spanOf(node) }));
-        return id;
+        out.push(id);
+        for (const jsx of findNestedJsxRoots(node.expression)) {
+          out.push(buildNestedRoot(jsx, parentId));
+        }
+        return;
       }
       case 'JSXElement':
-        return buildElement(node, parentId);
+        out.push(buildElement(node, parentId));
+        return;
       case 'JSXFragment':
-        return buildFragment(node, parentId);
+        out.push(buildFragment(node, parentId));
+        return;
       default:
-        return null;
+        return;
     }
   };
 
   const buildFragment = (node: JSXFragment, parentId: IRNodeId): IRNodeId => {
     const id = doc.alloc.next();
     const children: IRNodeId[] = [];
-    for (const c of node.children) {
-      const cid = buildChild(c, id);
-      if (cid != null) children.push(cid);
-    }
+    for (const c of node.children) appendChild(c, id, children);
     doc.nodes.set(id, createFragment(id, { children, parent: parentId, span: spanOf(node) }));
     backref.set(id, {
       nodeId: id,
@@ -401,10 +500,7 @@ function doParse(code: string, ctx: FrontendParseContext): ParseResult {
     const attrs: AttrMap = { entries, spreads, order };
 
     const children: IRNodeId[] = [];
-    for (const c of node.children) {
-      const cid = buildChild(c, id);
-      if (cid != null) children.push(cid);
-    }
+    for (const c of node.children) appendChild(c, id, children);
     for (const cid of children) {
       const cn = doc.nodes.get(cid);
       if (cn && cn.kind === 'expr') {

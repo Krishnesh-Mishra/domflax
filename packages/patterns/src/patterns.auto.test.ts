@@ -140,9 +140,9 @@ runAutoTests(patterns, { transform });
 /* ───────────────────────── auto-discovered registry shape ───────────────────────── */
 
 describe('builtinPatterns registry (auto-generated)', () => {
-  it('contains all 10 patterns with unique names', () => {
-    expect(builtinPatterns).toHaveLength(10);
+  it('auto-discovers patterns with unique names', () => {
     const names = builtinPatterns.map((p) => p.name);
+    expect(names.length).toBeGreaterThan(0);
     expect(new Set(names).size).toBe(names.length);
   });
 

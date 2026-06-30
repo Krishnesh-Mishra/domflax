@@ -286,3 +286,158 @@ describe('jsx backend ← IR (surgical full-module codegen)', () => {
     expect(() => parse(printed)).not.toThrow();
   });
 });
+
+/* ───────────────────────── JSX nested inside expression holes ───────────────────────── */
+
+/** Every element id reachable from the root, as live IRElements. */
+function allElements(doc: IRDocument): IRElement[] {
+  return elementIds(doc).map((id) => getElement(doc, id)!);
+}
+
+function findByTag(doc: IRDocument, tag: string): IRElement[] {
+  return allElements(doc).filter((e) => e.tag === tag);
+}
+
+function staticTokensOf(el: IRElement): string[] {
+  const seg = el.classes.segments[0];
+  return seg && seg.kind === 'static' ? seg.tokens.map((t) => t.value) : [];
+}
+
+function sourceOf(doc: IRDocument, el: IRElement): string {
+  const sf = [...doc.sources.values()][0]!;
+  return el.span ? sf.text.slice(el.span.start, el.span.end) : '';
+}
+
+// The confirmed regression fixture: JSX nested inside a `.map` callback — an empty `<div>` wrapper
+// around a `<div className="px-4 py-4">` row, keyed on the `<li>`.
+const MAP_MODULE = `export default function List({ items }) {
+  return (
+    <ul className="list">
+      {items.map((f) => (
+        <li key={f.id}>
+          <div>
+            <div className="px-4 py-4">{f.name}</div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+`;
+
+describe('jsx frontend → IR (JSX nested inside expression holes)', () => {
+  it('lowers JSX inside a `.map` callback into visitable IR element nodes with real spans', () => {
+    const doc = parse(MAP_MODULE);
+
+    // The <li>/<div>/<div> nested in the map body are now real, reachable element nodes.
+    const tags = allElements(doc).map((e) => e.tag);
+    expect(tags).toContain('ul');
+    expect(tags).toContain('li');
+    expect(tags.filter((t) => t === 'div')).toHaveLength(2);
+
+    const li = findByTag(doc, 'li')[0]!;
+    // The <li> is reachable from the root and carries a TRUE source span (inside the map body).
+    expect(elementIds(doc)).toContain(li.id);
+    expect(li.span).not.toBeNull();
+    expect(sourceOf(doc, li).startsWith('<li')).toBe(true);
+    expect(sourceOf(doc, li)).toContain('key={f.id}');
+    expect(li.meta.hasKey).toBe(true);
+    expect(li.isComponent).toBe(false);
+
+    // The inner row keeps its compressible static classes (so the compress pass can see them).
+    const inner = findByTag(doc, 'div').find((d) => staticTokensOf(d).includes('px-4'))!;
+    expect(staticTokensOf(inner)).toEqual(['px-4', 'py-4']);
+    expect(sourceOf(doc, inner)).toBe('<div className="px-4 py-4">{f.name}</div>');
+
+    // The `.map(...)` call itself is still preserved as an opaque dynamic child of <ul>.
+    const ul = findByTag(doc, 'ul')[0]!;
+    expect(ul.meta.hasDynamicChildren).toBe(true);
+  });
+
+  it('lowers JSX inside a `&&` logical expression', () => {
+    const doc = parse(`const A = () => <div>{show && <span className="px-2 py-2">hi</span>}</div>;`);
+    const span = findByTag(doc, 'span')[0];
+    expect(span).toBeDefined();
+    expect(staticTokensOf(span!)).toEqual(['px-2', 'py-2']);
+    expect(elementIds(doc)).toContain(span!.id);
+  });
+
+  it('lowers BOTH branches of a ternary into element nodes', () => {
+    const doc = parse(
+      `const A = () => <div>{cond ? <a className="x">A</a> : <b className="y">B</b>}</div>;`,
+    );
+    expect(findByTag(doc, 'a')[0]).toBeDefined();
+    expect(findByTag(doc, 'b')[0]).toBeDefined();
+    expect(staticTokensOf(findByTag(doc, 'a')[0]!)).toEqual(['x']);
+    expect(staticTokensOf(findByTag(doc, 'b')[0]!)).toEqual(['y']);
+  });
+});
+
+describe('jsx backend ← IR (surgical edits inside a `.map` callback)', () => {
+  it('round-trips a map row: unwrap the empty <div> + rewrite className, preserving key/{expr}', () => {
+    const doc = parse(MAP_MODULE);
+
+    // The empty wrapper <div> is the one whose only element child is the px-4 row.
+    const innerRow = findByTag(doc, 'div').find((d) => staticTokensOf(d).includes('px-4'))!;
+    const wrapperDiv = findByTag(doc, 'div').find((d) => staticTokensOf(d).length === 0)!;
+
+    // 1) compress the row's class (px-4 py-4 → p-4), 2) flatten the empty wrapper <div>.
+    const op: RewriteOp = {
+      op: 'unwrap',
+      target: wrapperDiv.id,
+      origin: { pattern: 'test/unwrap', category: 'flatten/test', safety: 0 },
+    };
+    const { doc: out } = applyOps(doc, [op], { safetyCeiling: 3 });
+    const survivingRow = getElement(out, innerRow.id)!;
+    setStaticTokens(survivingRow, ['p-4']);
+
+    const printed = printDoc(out);
+
+    // The whole module shell + the `.map((f) => …)` scaffolding survive verbatim.
+    expect(printed).toContain('export default function List({ items })');
+    expect(printed).toContain('{items.map((f) => (');
+    expect(printed).toContain('<ul className="list">');
+
+    // The keyed <li> and the dynamic {f.name} hole are preserved verbatim.
+    expect(printed).toContain('<li key={f.id}>');
+    expect(printed).toContain('{f.name}');
+
+    // The empty wrapper <div> tags are gone, and the row's className was rewritten in place.
+    expect(printed).toContain('<div className="p-4">{f.name}</div>');
+    expect(printed).not.toContain('px-4');
+    expect(printed).not.toContain('py-4');
+
+    // Output is still valid JSX/TSX the frontend can re-parse.
+    expect(() => parse(printed)).not.toThrow();
+  });
+
+  it('KEY SAFETY: unwrapping a keyed wrapper transfers its key onto the surviving child', () => {
+    // Here the KEYED element is itself the wrapper being unwrapped; its single child has no key.
+    const KEY_MODULE = `export default function List({ items }) {
+  return (
+    <ul>
+      {items.map((f) => (
+        <li key={f.id}>
+          <div className="row">{f.name}</div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+`;
+    const doc = parse(KEY_MODULE);
+    const li = findByTag(doc, 'li')[0]!;
+    const op: RewriteOp = {
+      op: 'unwrap',
+      target: li.id,
+      origin: { pattern: 'test/unwrap', category: 'flatten/test', safety: 0 },
+    };
+    const { doc: out } = applyOps(doc, [op], { safetyCeiling: 3 });
+    const printed = printDoc(out);
+
+    // The <li> tags are gone, but its key was salvaged onto the surviving <div>.
+    expect(printed).not.toContain('<li');
+    expect(printed).toContain('<div key={f.id} className="row">{f.name}</div>');
+    expect(() => parse(printed)).not.toThrow();
+  });
+});

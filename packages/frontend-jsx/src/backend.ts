@@ -150,6 +150,87 @@ function editClasses(ms: MagicString, doc: IRDocument, sf: SourceFile, el: IREle
   return true;
 }
 
+/**
+ * Extract a `key=…` attribute (verbatim, e.g. `key={f.id}` or `key="row"`) from an opening-tag's
+ * source text, or null when the tag carries no key. Brace/quote-aware so `key={f.id}` with nested
+ * braces is captured whole. Requires whitespace before `key` so `data-key=` / `aria-keyshortcuts=`
+ * never false-match.
+ */
+function extractKeyAttr(openTag: string): string | null {
+  const m = /(^|\s)key\s*=\s*/.exec(openTag);
+  if (!m) return null;
+  const keyStart = m.index + m[1].length;
+  let i = m.index + m[0].length;
+  const ch = openTag[i];
+  if (ch === '{') {
+    let depth = 0;
+    for (; i < openTag.length; i += 1) {
+      const c = openTag[i];
+      if (c === '{') depth += 1;
+      else if (c === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          i += 1;
+          break;
+        }
+      }
+    }
+  } else if (ch === '"' || ch === "'") {
+    const q = ch;
+    i += 1;
+    for (; i < openTag.length; i += 1) {
+      if (openTag[i] === q) {
+        i += 1;
+        break;
+      }
+    }
+  } else {
+    for (; i < openTag.length; i += 1) {
+      if (/[\s>/]/.test(openTag[i]!)) break;
+    }
+  }
+  return openTag.slice(keyStart, i);
+}
+
+/**
+ * KEY SAFETY: when an UNWRAPPED wrapper carried a React `key`, that key must not vanish with the
+ * deleted tags. If the wrapper had exactly one surviving (maximal) element child and that child has
+ * no key of its own, transfer the wrapper's `key=…` verbatim onto the survivor's opening tag.
+ * Conservative: anything ambiguous (no surviving element child, multiple survivors, child already
+ * keyed) is left untouched (the flatten pattern is expected to have refused such a case).
+ */
+function transferKeyOnUnwrap(
+  ms: MagicString,
+  doc: IRDocument,
+  sf: SourceFile,
+  region: Backref,
+  kept: readonly IRNode[],
+): void {
+  const open = region.openTagSpan;
+  if (!open || open.file !== sf.id) return;
+  const keyAttr = extractKeyAttr(sf.text.slice(open.start, open.end));
+  if (!keyAttr) return;
+
+  const inside: IRElement[] = [];
+  for (const n of kept) {
+    if (n.kind !== 'element' || !n.span || n.span.file !== sf.id) continue;
+    if (strictlyContains(region.span, n.span)) inside.push(n);
+  }
+  // Keep only the topmost survivors (not nested inside another survivor of this region).
+  const maximal = inside.filter(
+    (n) => !inside.some((o) => o !== n && o.span && n.span && strictlyContains(o.span, n.span)),
+  );
+  if (maximal.length !== 1) return;
+
+  const child = maximal[0]!;
+  const childOpen = doc.backref.get(child.id)?.openTagSpan;
+  if (!childOpen || childOpen.file !== sf.id) return;
+  if (extractKeyAttr(sf.text.slice(childOpen.start, childOpen.end))) return; // already keyed
+
+  // Insert immediately after the child's tag name: `<tag‸ …`.
+  ms.appendLeft(childOpen.start + 1 + child.tag.length, ` ${keyAttr}`);
+}
+
 /** Surgical full-module codegen. Returns null when the document has no retained source. */
 function surgicalPrint(doc: IRDocument): string | null {
   const sf = primarySource(doc);
@@ -182,6 +263,8 @@ function surgicalPrint(doc: IRDocument): string | null {
     if (coveredByFull) continue;
 
     if (r.unwrapped) {
+      // KEY SAFETY: salvage a `key=…` off the wrapper onto its surviving child before deleting tags.
+      transferKeyOnUnwrap(ms, doc, sf, r.backref, kept);
       // Delete only the wrapper's tags; keep its (surviving) inner content verbatim.
       const open = r.backref.openTagSpan;
       const close = r.backref.closeTagSpan;
