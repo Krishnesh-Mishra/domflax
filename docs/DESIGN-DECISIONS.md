@@ -211,6 +211,22 @@ them **optional peer deps** of `domflax`, loaded **lazily** per provider (custom
 pull tailwind, and vice-versa). The pure `@domflax/*` packages are still bundled; only the fragile
 engines stay external. **Why optional-peer + lazy:** correctness under bundling + smaller installs.
 
+### Q22b. Should the build-time transform gate risky flattens with a headless-Chromium equivalence check?
+**Decision:** **No — the user-facing transform is STATIC-ONLY and never launches a browser.** We first
+built a verifier-gated mode (render before/after, commit only if identical), then removed it from user
+builds. **Why:** (1) rendering at build time is fragile (flaky, heavy, env-dependent); (2) more
+fundamentally, the equivalence that matters for context-dependent flattens (`place-self` needs a
+flex/grid parent) is a *runtime composition* property — rendering an *isolated* snippet in a neutral
+page can't know the real parent, so it would conservatively reject the same cases static analysis
+already skips → a browser dependency for ~no gain. **What we do instead:** a static classifier
+(`provably-safe` vs `needs-verification`); provably-safe flattens (passthrough/empty/display-contents/
+redundant-fragment, and centering only when the parent is *statically* flex/grid and no styles drop)
+are applied; everything else is **skipped** (conservative, sound, fast, zero browser). The
+`@domflax/verify` Chromium tool remains a **maintainer-side** pattern-testing aid + an optional
+standalone `domflax/verify` export — never in the transform path. Cross-file/framework-aware context
+inference (Astro static, Next layouts) is a possible future frontend enhancement, not a general
+mechanism (undecidable for arbitrary React composition; breaks incremental builds).
+
 ### Q23. Why didn't 85 green tests catch that?
 **Decision:** Because tests ran against **source**, not the **built dist**. Add **dist-level smoke
 tests** that build then `require` `domflax/dist` and assert the real transform output — source-passing
