@@ -58,18 +58,41 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "playwright": "*"
+    "playwright": "*",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "postcss-selector-parser": "^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {
     "playwright": {
       "optional": true
+    },
+    "tailwindcss": {
+      "optional": true
+    },
+    "postcss": {
+      "optional": true
+    },
+    "postcss-selector-parser": {
+      "optional": true
     }
+  },
+  "dependencies": {
+    "@babel/parser": "^7.26.0",
+    "@babel/traverse": "^7.26.0",
+    "@babel/types": "^7.26.0"
   },
   "devDependencies": {
     "@domflax/core": "*",
     "@domflax/patterns": "*",
     "@domflax/pattern-kit": "*",
+    "@domflax/frontend-jsx": "*",
+    "@domflax/resolver-tailwind": "*",
+    "@domflax/resolver-css": "*",
     "@domflax/verify": "*",
-    "@domflax/cli": "*"
+    "@domflax/cli": "*",
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.5.16",
+    "postcss-selector-parser": "^7.1.0"
   }
 }

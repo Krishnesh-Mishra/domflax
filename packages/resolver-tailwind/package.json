@@ -17,10 +17,13 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@domflax/core": "*"
+    "@domflax/core": "*",
+    "@domflax/pattern-kit": "*",
+    "tailwindcss": "^3.4.17"
   },
   "private": true
 }

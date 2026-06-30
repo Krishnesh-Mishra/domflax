@@ -17,10 +17,14 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@domflax/core": "*"
+    "@domflax/core": "*",
+    "@domflax/pattern-kit": "*",
+    "postcss": "^8.5.16",
+    "postcss-selector-parser": "^7.1.0"
   },
   "private": true
 }

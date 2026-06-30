@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@domflax/core": pkg("core"),
+      "@domflax/pattern-kit/testing": fileURLToPath(
+        new URL("./packages/pattern-kit/src/testing.ts", import.meta.url),
+      ),
       "@domflax/pattern-kit": pkg("pattern-kit"),
       "@domflax/patterns": pkg("patterns"),
       "@domflax/resolver-tailwind": pkg("resolver-tailwind"),

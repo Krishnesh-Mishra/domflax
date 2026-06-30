@@ -20,7 +20,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@domflax/core": "*"
+    "@domflax/core": "*",
+    "@babel/parser": "^7.26.0",
+    "@babel/traverse": "^7.26.0",
+    "@babel/types": "^7.26.0"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.20.6"
   },
   "private": true
 }
