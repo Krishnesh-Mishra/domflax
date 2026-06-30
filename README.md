@@ -2,26 +2,32 @@
 
 > Compile-time DOM flattener and semantic CSS compressor — fewer DOM nodes, smaller class sets, **identical rendered UI**.
 
-`domflax` analyzes your markup at build time and rewrites it to a smaller equivalent DOM:
+`domflax` analyzes your JSX at build time and rewrites it to a smaller equivalent:
 
-1. **Flatten** — removes redundant wrapper elements (fewer DOM nodes).
-2. **Compress** — collapses verbose class sets into minimal equivalents (`px-4 py-4` → `p-4`, `w-10 h-10` → `size-10`).
+1. **Compress** — collapses verbose class sets into their shortest equivalents (`px-4 py-4 mt-2 mb-2` → `p-4 my-2`, `h-10 w-10` → `size-10`).
+2. **Flatten** — removes wrapper elements that are *provably inert* (they add no layout and paint nothing).
 
-The key idea: matching happens on **computed styles**, not raw class names. So instead of hard-coding `flex justify-center items-center`, domflax understands *"this is a centering wrapper"* — so the same rules work across Tailwind, custom CSS, and (later) other providers.
+Matching happens on **computed styles**, not raw class names — so the rules work across Tailwind, custom CSS, and (later) other providers, and a Tailwind class and an equivalent custom class compress the same way.
 
 ```tsx
-// before: 2 nodes
-<div className="w-full h-full flex justify-center items-center">
-  <div className="h-10 w-10 bg-red-200">Hello</div>
+// before
+<div className="contents">
+  <div className="px-4 py-4 mt-2 mb-2" onClick={save}>{title}</div>
 </div>
 
-// after: 1 node, same UI
-<div className="bg-red-200 size-10 place-self-center">Hello</div>
+// after — the inert wrapper is gone, classes are minimized, behavior is identical
+<div className="p-4 my-2" onClick={save}>{title}</div>
 ```
 
-It only ever rewrites the **static shape** of your markup. Dynamic content (`{expr}`, components, `dangerouslySetInnerHTML`) is opaque and preserved — `async`/data-fetching code is unaffected. It refuses to flatten a wrapper a CSS selector depends on (`.list > .item h3`) or whose styles it can't safely reproduce.
+It rewrites only the **static shape** of your markup. Dynamic class lists (`className={cn(...)}`), components, and `dangerouslySetInnerHTML` are opaque and preserved; `async`/data-fetching code is untouched.
 
-> **Status: v0.1.0 — early but real.** Works end-to-end on real `.jsx`/`.tsx` modules via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. **Scope:** it optimizes JSX in **component-return position**. Optimizing inside `.map()`/list rows is the next milestone (see Roadmap) — list rows are currently left unchanged. APIs may change before 1.0.
+**Safety model — conservative by default, no browser involved.**
+
+- **Compression is always safe.** It only re-serializes an element's *own* class list, so a `ref`, an event handler, a `{dynamic}` child, or `dangerouslySetInnerHTML` never blocks it — only a *dynamic* className (or a class a CSS selector depends on) is left alone.
+- **Flattening is conservative.** A wrapper is removed only when removal is *provably* render-neutral — it establishes no layout context and has no style to reproduce on its child. It never drops a style it can't reproduce, and never touches a wrapper a CSS selector depends on (`.list > .item h3`).
+- domflax runs as a **purely static** source transform. It never launches a browser, so builds stay fast and deterministic.
+
+> **Status: v0.1.1.** Works end-to-end on real `.jsx`/`.tsx` — in component-return position **and inside `.map()` / expressions (list rows)** — via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. 22 patterns. Wrappers that establish a layout context (e.g. `flex`/`grid` centering) are **conservatively preserved** — proving those render-identical needs context a static pass can't see; recovering them safely is on the Roadmap. APIs may change before 1.0.
 
 ## Install
 
@@ -94,14 +100,37 @@ npx domflax ./src --out ./domflax-out
 | `--dry-run` | Preview changes, write nothing. |
 | `--dangerously-overwrite-source` | Allow in-place source rewrite (needs clean git). |
 
+## Writing a pattern
+
+Patterns are how domflax knows what's safe to rewrite. Each is a **single declarative file** — the definition and its tests live in one `definePattern` call, with no separate test file and no manual registration:
+
+```ts
+import { definePattern } from 'domflax/pattern-kit'
+
+export default definePattern({
+  name: 'padding-shorthand',
+  category: 'compress/padding-shorthand',
+  safety: 1,
+  doc: { summary: 'Equal/paired padding longhands collapse to the shortest shorthand.' },
+  // a compress recipe rewrites only the element's own class list (declines with null otherwise)
+  rewrite: { rewriteClasses: (computed) => foldPadding(computed) },
+  test: {
+    cases:   [{ before: '<div className="px-4 py-4">{x}</div>', after: '<div className="p-4">{x}</div>' }],
+    noMatch: ['<div className="pt-2 pr-4 pb-8 pl-4">box</div>'],
+  },
+})
+```
+
+Drop the file under `src/library/**` as `*.pattern.ts` and it's **auto-discovered**. The generic harness runs every pattern's `test` cases through the *real* transform, plus an automatic invariant suite (purity, opacity-barrier safety, id-preservation, fixpoint termination) — so a new pattern is wired, tested, and proven sound with zero boilerplate. Flatten patterns auto-receive the opacity + selector-safety guards; compress patterns are gated only on dynamic / selector-bound classes.
+
 ## Advanced entry points
 
 ```ts
-import { definePattern, and, computed } from 'domflax/pattern-kit'  // author custom patterns
-import { verifyEquivalence } from 'domflax/verify'                   // standalone equivalence check
+import { definePattern } from 'domflax/pattern-kit'  // author custom patterns
+import { verifyEquivalence } from 'domflax/verify'   // optional, standalone equivalence checker
 ```
 
-`domflax/verify` renders before/after in headless Chromium and diffs pixels + box geometry + computed styles to prove the UI is identical. It uses Playwright (an optional peer — installed only if you use it).
+The transform itself is static and never launches a browser. `domflax/verify` is a **separate, opt-in tool** that renders before/after in headless Chromium (via Playwright, an optional peer) and diffs pixels + box geometry + computed styles — handy for vetting patterns, *not* part of your build.
 
 ## Examples
 
@@ -111,15 +140,17 @@ Runnable examples live in [`examples/`](./examples): `vite-react-tailwind`, `vit
 
 - [x] Monorepo + single bundled package
 - [x] Core engine (IR, pass manager, surgical full-module codegen)
-- [x] Pattern kit (declarative `pattern()` + auto-discovery) and 10 flatten/compress patterns
+- [x] Declarative `definePattern({ …, test })` + auto-discovery; 22 flatten/compress patterns
 - [x] Real Tailwind engine + custom-CSS resolvers
 - [x] CSS selector-safety + residual-skip (don't break `div div h1`; never drop un-reproducible styles)
+- [x] Compression across dynamic content (refs / handlers / `{expr}` children)
+- [x] Optimize JSX inside `.map()` / expressions (list rows)
 - [x] Vite + Next.js (webpack) adapters + CLI (folders, wizard, output-safety)
-- [x] Equivalence verifier (Playwright)
-- [ ] **Optimize JSX inside `.map()` / expressions (list rows) — next milestone**
+- [x] Standalone equivalence verifier (Playwright, opt-in)
+- [ ] Context-aware (or opt-in-verified) flatten for `flex`/`grid` centering wrappers
 - [ ] HTML frontend (plain `.html` / Astro static)
 - [ ] `domflax/runtime` — optimize dynamic HTML strings before `innerHTML`
-- [ ] Bootstrap & other providers; `templatize` (plain-HTML cloneNode)
+- [ ] More providers; `templatize` (plain-HTML cloneNode)
 
 ## License
 
