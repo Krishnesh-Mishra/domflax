@@ -167,6 +167,19 @@ names + valid exports. Runs in `prebuild`; a dev watcher regenerates. The genera
 gitignored build artifact. Pairs with Q18/Q19: drop a `*.pattern.ts` → auto-discovered → auto-tested
 → CI-Chromium-proven, zero manual wiring.
 
+### Q19c. One file per pattern: definition + tests in a single `definePattern({…, test})` call
+**Decision:** A pattern is authored as ONE `definePattern({ name, safety, doc, match, rewrite, test })`
+call with `export default` — one import, no separate `*.test.ts`, no manual registration. `test`
+holds the spec declaratively (`cases: [{before, after}]`, `noMatch: […]`, optional `provider`/
+`contexts`, and a rare `custom(ctx)` escape hatch). The single generic harness iterates
+`builtinPatterns`, runs each pattern's `test` through the REAL transform, and applies the automatic
+invariant suite (purity, no-cross-opaque, id-preservation, safety ceiling, termination) — no
+per-pattern spec needed. **Why:** single source of truth (no definition↔test drift), near-zero
+marginal cost per pattern, and tests-as-data the harness can introspect/extend (report, fuzz, feed the
+maintainer verifier). `definePattern` is THE declarative function (absorbs the old `pattern()`); raw
+`match`/`rewrite` fns remain escape hatches. This supersedes the earlier separate-`examples`+separate-
+test-file approach and simplifies the test-folder restructure (no per-pattern test files remain).
+
 ### Q19. Do we hand-write a test per pattern? Can tests be automatic?
 **Decision:** **No hand tests.** Because `match` is structured data, the framework **generates test
 inputs from the declaration** (conforming → must transform; guard-violating → must not). The author
