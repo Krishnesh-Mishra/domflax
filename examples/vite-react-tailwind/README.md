@@ -17,8 +17,8 @@ shape:
 1. **Flatten** — removes redundant wrapper elements (fewer DOM nodes). The
    `<div className="w-full h-full flex justify-center items-center">` wrapper in
    `src/App.tsx` exists only to center its child; domflax pushes `place-self:center`
-   onto the child and drops the wrapper. Empty single-child wrappers (including the
-   per-row wrapper inside the `.map(...)` list) are removed too.
+   onto the child and drops the wrapper. Other empty single-child wrappers in a
+   component's returned JSX are removed too.
 2. **Compress** — collapses verbose class/style sets into minimal equivalents
    (e.g. `px-4 py-4` → `p-4`, `top-0 right-0 bottom-0 left-0` → `inset-0`).
 
@@ -26,32 +26,21 @@ Matching happens on **computed styles**, not raw class names, and dynamic conten
 (`{expr}`, components, `.map()` data) is treated as opaque and preserved — so the
 list keeps its stable React `key`s and its data.
 
-> ⚠️ Status (domflax v0 — important). domflax is an early scaffold. As of the
-> pinned snapshot in `../../packages/domflax`, the JSX frontend/backend does **not**
-> yet round-trip a full module: its `transform` emits only the JSX it finds and
-> drops the surrounding code (imports, function declarations, the `render()` call,
-> `export default`). In practice that means the build **succeeds** but the rendered
-> app is currently broken when the plugin is active — this is a known limitation of
-> domflax's incomplete backend, not of this example. The example is wired exactly as
-> domflax intends and will work end-to-end once the backend round-trips whole files.
->
-> To preview the app's UI in the meantime, comment out the `domflax.vite(...)` line
-> in `vite.config.ts` and re-run `npm run dev`.
+> **Scope in v0.1.0.** domflax v0.1.0 optimizes JSX in **component-return position**
+> (the markup a component returns). JSX written **inside `.map(...)` callbacks** —
+> like the feature list in `<Card>` — is **not** optimized yet: list/expression
+> optimization is a documented **Stage-2 roadmap** item. The `.map` demo below is
+> included as a realistic example, but its per-row wrappers ship as authored.
+
+The transform round-trips the **whole module**: imports, function declarations,
+`export default`, and the `render()` call are all preserved — only the JSX shape is
+rewritten. The build succeeds **and** the app renders correctly with the plugin
+active.
 
 ## Run it
 
-domflax must be **built first** (the example consumes its `dist/`). From the repo
-root (`flaxe/`):
-
-```bash
-npm install                 # once, at the repo root (installs workspace deps)
-npm run build -w domflax    # build domflax's dist/ that this example imports
-```
-
-> Another process in this repo may also be rebuilding domflax; if you hit a
-> transient error here, just run the build command once more.
-
-Then, in **this directory** (`examples/vite-react-tailwind/`):
+domflax's `dist/` is consumed via the `file:../../packages/domflax` link and is
+already built. In **this directory** (`examples/vite-react-tailwind/`):
 
 ```bash
 npm install                 # installs react/vite/tailwind + the file: link to domflax
@@ -76,17 +65,34 @@ console.log(eng.transform(readFileSync('src/App.tsx','utf8'), process.cwd()+'/sr
 "
 ```
 
-What you should look for, once the backend round-trips full modules (see the Status
-note above):
+What you will see (verified against the current engine):
 
-- **Flatten — fewer DOM nodes.** The full-size `flex justify-center items-center`
-  centering wrapper and the empty single-child wrappers (including the per-row
-  wrapper inside the `.map(...)`) collapse away; the centering intent moves onto the
-  child as `place-self:center`. The list keeps its stable React `key`s and dynamic
-  content untouched.
-- **Compress — shorter class sets.** `px-4 py-4` → `p-4`,
-  `top-0 right-0 bottom-0 left-0` → `inset-0`, etc.
+- **Compress — shorter class sets.** In `<Badge>`,
+  `absolute top-0 right-0 bottom-0 left-0 w-8 h-8 rounded-full …` becomes
+  `absolute rounded-full inset-0 size-8 …`. In `<Card>`, `px-4 py-4` → `p-4`. In
+  `<App>`, `w-full h-full` → `size-full`.
+- **Flatten — fewer DOM nodes.** The empty single-child `<div>` wrappers collapse
+  away (e.g. the bare `<div>` nested inside `<App>`'s centering wrapper is removed).
+  Wrappers that actually paint (the `bg-slate-100` centering wrapper, the `.card`)
+  are kept — domflax only drops *do-nothing* wrappers. The `.map(...)` feature list
+  is left entirely as authored (its per-row wrappers are **not** flattened in
+  v0.1.0 — see "Scope in v0.1.0" above); its stable React `key`s and dynamic
+  `{expr}` content are preserved.
 
-Once the app renders, you can also count nodes under `#root` in devtools' Elements
-panel and toggle the plugin off in `vite.config.ts` to see the before/after diff, or
-read the compiled `dist/assets/*.js` after `npm run build`.
+> When a flattened centering wrapper has no paint of its own, domflax pushes
+> `place-self-center` onto the surviving child instead of dropping the centering —
+> see the sibling `next-tailwind` example's `FlattenDemo` for that exact case.
+
+### In the built bundle
+
+After `npm run build`, the optimized classes are visible directly in the emitted JS:
+
+```bash
+grep -o 'size-full\|inset-0\|size-8\|p-4' dist/assets/*.js   # the compressed forms
+grep -o 'w-full h-full\|top-0 right-0 bottom-0 left-0\|w-8 h-8' dist/assets/*.js  # gone
+```
+
+The first command finds the compressed classes; the second finds nothing — the
+verbose forms are no longer shipped. You can also run `npm run preview`, open the
+app, and count the nodes under `#root` in devtools' Elements panel, then toggle the
+plugin off in `vite.config.ts` to compare before/after.

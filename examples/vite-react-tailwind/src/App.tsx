@@ -40,8 +40,11 @@ function Card() {
 
         <ul className="mt-4 space-y-2">
           {features.map((f) => (
-            // Per-row redundant wrapper around each list item: domflax flattens it
-            // away while preserving the stable React `key` and the dynamic content.
+            // NOTE: JSX inside `.map(...)` callbacks is NOT optimized in domflax
+            // v0.1.0 — list/expression optimization is a documented Stage-2 roadmap
+            // item. These per-row wrappers are shipped as authored; the stable React
+            // `key` and the dynamic content are preserved either way. domflax v0.1.0
+            // optimizes component-return JSX (see <App>/<Card>/<Badge> above).
             <li key={f.id}>
               <div>
                 <div className="px-4 py-4 rounded-lg bg-slate-50">

@@ -1,8 +1,9 @@
 // ListDemo — a `.map(...)` list where every row has a redundant wrapper.
 //
-// Each row renders a redundant centering `<div>` around its content. domflax flattens the static
-// wrapper shape inside the map callback while preserving the dynamic `{item.*}` expressions and the
-// stable `key`. The list data itself is untouched.
+// NOTE: JSX written inside `.map(...)` callbacks is NOT optimized in domflax v0.1.0 — list /
+// expression optimization is a documented Stage-2 roadmap item. domflax v0.1.0 optimizes
+// component-return JSX (see FlattenDemo / CompressDemo). These per-row wrappers therefore ship as
+// authored; the dynamic `{item.*}` expressions, the stable `key`, and the list data are preserved.
 interface Row {
   readonly id: number;
   readonly label: string;
@@ -18,9 +19,10 @@ const ROWS: readonly Row[] = [
 export function ListDemo() {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-semibold">3. List — mapped rows with redundant wrappers</h2>
+      <h2 className="text-lg font-semibold">3. List — mapped rows (not optimized in v0.1.0)</h2>
       <p className="mt-1 text-sm text-slate-500">
-        Static row wrappers flatten; the dynamic <code>{'{item}'}</code> values and stable keys are
+        JSX inside <code>.map(...)</code> is not optimized in v0.1.0 (Stage-2 roadmap); these row
+        wrappers ship as authored. The dynamic <code>{'{item}'}</code> values and stable keys are
         preserved.
       </p>
 

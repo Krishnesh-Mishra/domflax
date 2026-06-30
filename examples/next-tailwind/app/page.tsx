@@ -5,9 +5,10 @@ import { AsyncDemo } from '@/components/AsyncDemo';
 
 // This page is an async Server Component (App Router). It renders four demos that exercise the
 // domflax webpack adapter at build time:
-//   1. Flatten   — redundant wrappers collapse.
+//   1. Flatten   — redundant wrappers in component-return JSX collapse.
 //   2. Compress  — verbose Tailwind class sets shrink.
-//   3. List      — `.map(...)` rows flatten while keys/data are preserved.
+//   3. List      — `.map(...)` rows are NOT optimized in v0.1.0 (Stage-2 roadmap); keys/data
+//                  are preserved and the rows ship as authored.
 //   4. Async     — an awaited data fetch is left untouched.
 export default async function Home() {
   return (

@@ -9,18 +9,9 @@
 // arbitrary webpack loaders, so the adapter is a no-op there — use the webpack path for now.
 //
 // ── Loading domflax ───────────────────────────────────────────────────────────────────────────
-// The documented usage is simply:
-//
-//     const domflax = require('domflax');
-//
-// In this monorepo example we load domflax's ESM entry (`dist/index.js`) explicitly via its
-// resolved path. The reason: domflax's current CommonJS bundle resolves its webpack loader path
-// from `import.meta.url`, which is `undefined` under CommonJS — so the plain `require('domflax')`
-// path throws during `webpack(config)`. The ESM bundle carries a valid `import.meta.url`, and
-// Node (>=22) supports `require()`-ing an ES module, so this stays a CommonJS config file.
-const path = require('path');
-const domflaxDir = path.dirname(require.resolve('domflax/package.json'));
-const domflax = require(path.join(domflaxDir, 'dist', 'index.js'));
+// domflax's CommonJS bundle loads cleanly via the documented form below; its webpack loader path
+// resolves correctly under `require`, so no ESM workaround is needed.
+const domflax = require('domflax');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
