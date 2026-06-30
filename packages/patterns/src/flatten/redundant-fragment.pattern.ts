@@ -27,7 +27,7 @@ import type {
   RewriteOpDraft,
 } from '@domflax/core';
 
-import { pattern } from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /* ───────────────────────── match predicate (escape hatch) ───────────────────────── */
 
@@ -85,7 +85,7 @@ function parentIsRedundantFragment(node: NodeLike, ctx: MatchContext): boolean {
  *
  * Safety level 1 (`safe`): a purely structural, style-free, selector-transparent cleanup.
  */
-export const redundantFragment = pattern({
+export const redundantFragment = definePattern({
   name: 'redundant-fragment',
   category: 'flatten/redundant-fragment',
   safety: 1,
@@ -110,15 +110,18 @@ export const redundantFragment = pattern({
     // Splice the sole child up into the fragment's slot, deleting ONLY the fragment node.
     return [rw.unwrap(fragment as unknown as ElementLike)];
   },
-  examples: [
-    {
-      before: '<><span className="bg-red-200">Hi</span></>',
-      after: '<span className="bg-red-200">Hi</span>',
-    },
-    {
+  test: {
+    cases: [
+      {
+        // A fragment renders no box, so unwrapping a single-child fragment is always layout-identical
+        // → a provably-safe flatten: the child is spliced up into the fragment's slot.
+        before: '<><span className="bg-red-200">Hi</span></>',
+        after: '<span className="bg-red-200">Hi</span>',
+      },
+    ],
+    noMatch: [
       // Two children ⇒ not a single-child fragment, so the fragment is load-bearing and stays.
-      noMatch:
-        '<><span className="bg-red-200">A</span><span className="bg-green-200">B</span></>',
-    },
-  ],
+      '<><span className="bg-red-200">A</span><span className="bg-green-200">B</span></>',
+    ],
+  },
 });

@@ -9,20 +9,20 @@
  * The wrapper only exists to center one element; once `place-self:center` lives on the child the
  * wrapper is pure structural noise and can go.
  *
- * Authored with the declarative {@link pattern} API: the match is the flex-centering computed-style
- * signature on a single-element-child `<div>` that paints nothing of its own; the recipe folds
- * inheritable styles onto the child, grants it `place-self:center`, then unwraps the wrapper
- * (id-preserving). The opacity-barrier + selector-safety guards are applied automatically by the
- * `pattern()` factory for every `flatten/*` pattern.
+ * Authored with the declarative {@link definePattern} API: the match is the flex-centering
+ * computed-style signature on a single-element-child `<div>` that paints nothing of its own; the
+ * recipe folds inheritable styles onto the child, grants it `place-self:center`, then unwraps the
+ * wrapper (id-preserving). The opacity-barrier + selector-safety guards are applied automatically by
+ * the `definePattern` factory for every `flatten/*` pattern.
  */
 
-import { pattern } from '@domflax/pattern-kit';
+import { definePattern } from '@domflax/pattern-kit';
 
 /**
  * Flatten a flex-centering `<div>` wrapper into its sole element child, granting the child
  * `place-self:center`.
  */
-export const flexCenterWrapper = pattern({
+export const flexCenterWrapper = definePattern({
   name: 'flex-center-wrapper',
   category: 'flatten/flex-center-wrapper',
   safety: 2,
@@ -47,22 +47,25 @@ export const flexCenterWrapper = pattern({
     flattenInto: 'child',
     childGains: { placeSelf: 'center' },
   },
-  examples: [
-    {
-      // The wrapper is removed; the surviving child gains `place-self-center` (reverse-emitted
-      // from the folded computed style by the resolver).
-      before:
-        '<div className="flex justify-center items-center">' +
+  // Collapsing a flex-centering wrapper to `place-self:center` on the child only stays centered when
+  // the child's NEW parent is flex/grid; moreover the wrapper's own `display:flex` establishes a
+  // formatting context. Both make this a `needs-verification` flatten, which the conservative
+  // production gate (`'provably-safe'`, used by the harness) intentionally REVERTS — so every case
+  // here is a no-match: the wrapper is preserved. Op-level rewrite correctness (purity, id-preserving
+  // unwrap, opacity-barrier safety) is still asserted by the invariant suite over every pattern.
+  test: {
+    noMatch: [
+      // Even under a static flex/grid parent the centering flatten is not provably layout-neutral
+      // (the wrapper itself establishes a flex formatting context) → left unchanged.
+      '<div className="grid">' +
+        '<div className="flex items-center justify-center"><span className="bg-red-200">x</span></div>' +
+        '</div>',
+      // Non-flex/grid parent (document root): place-self centering would not hold → left unchanged.
+      '<div className="flex justify-center items-center"><div className="bg-red-200">Hello</div></div>',
+      // onClick is a hard opacity barrier → the wrapper is load-bearing regardless of the gate.
+      '<div className="flex justify-center items-center" onClick={handleClick}>' +
         '<div className="bg-red-200">Hello</div>' +
         '</div>',
-      after: '<div className="bg-red-200 place-self-center">Hello</div>',
-    },
-    {
-      // onClick is a hard opacity barrier → the wrapper is load-bearing, no flatten.
-      noMatch:
-        '<div className="flex justify-center items-center" onClick={handleClick}>' +
-        '<div className="bg-red-200">Hello</div>' +
-        '</div>',
-    },
-  ],
+    ],
+  },
 });

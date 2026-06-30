@@ -42,7 +42,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -148,7 +148,7 @@ function withFoldedScrollPadding(sm: StyleMap, fold: ScrollPaddingFold): StyleMa
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold four equal scroll-padding sides into the single `scroll-padding` shorthand. */
-export const scrollPaddingShorthand = pattern({
+export const scrollPaddingShorthand = definePattern({
   name: 'scroll-padding-shorthand',
   category: 'compress/scroll-padding-shorthand',
   safety: 1,
@@ -180,17 +180,17 @@ export const scrollPaddingShorthand = pattern({
       return fold ? withFoldedScrollPadding(computed, fold) : null;
     },
   },
-  examples: [
-    {
-      // The four equal scroll-padding longhands collapse to a `scroll-padding` decl at the IR level;
-      // the minimizing reverse-emit then picks the single shortest utility (`scroll-p-4`) that
-      // reproduces it, replacing the four `scroll-p{t,r,b,l}-4` tokens. `bg-red-200` is preserved.
-      before: '<div className="scroll-pt-4 scroll-pr-4 scroll-pb-4 scroll-pl-4 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 scroll-p-4">box</div>',
-    },
-    {
-      // Sides differ (top != bottom) → no all-equal collapse.
-      noMatch: '<div className="scroll-pt-2 scroll-pr-4 scroll-pb-8 scroll-pl-4 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal scroll-padding longhands collapse to a `scroll-padding` decl at the IR level;
+        // the minimizing reverse-emit then picks the single shortest utility (`scroll-p-4`) that
+        // reproduces it, replacing the four `scroll-p{t,r,b,l}-4` tokens. `bg-red-200` is preserved.
+        before: '<div className="scroll-pt-4 scroll-pr-4 scroll-pb-4 scroll-pl-4 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 scroll-p-4">box</div>',
+      },
+    ],
+    // Sides differ (top != bottom) → no all-equal collapse.
+    noMatch: ['<div className="scroll-pt-2 scroll-pr-4 scroll-pb-8 scroll-pl-4 bg-red-200">box</div>'],
+  },
 });

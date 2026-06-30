@@ -29,7 +29,7 @@ import type {
   StyleMap,
 } from '@domflax/core';
 
-import { hasDynamicClasses, not, pattern, type Matcher } from '@domflax/pattern-kit';
+import { definePattern, hasDynamicClasses, not, type Matcher } from '@domflax/pattern-kit';
 
 /* ───────────────────────── local meta/attr/selector matchers ───────────────────────── */
 
@@ -105,7 +105,7 @@ const hasNonInlineDisplay: Matcher = (node, ctx) => {
  * Flatten a do-nothing inline `<span>` wrapper into its sole element child, folding any inheritable
  * styles down first so inherited values survive the box removal.
  */
-export const redundantInlineWrapper = pattern({
+export const redundantInlineWrapper = definePattern({
   name: 'redundant-inline-wrapper',
   category: 'flatten/redundant-inline-wrapper',
   safety: 2,
@@ -138,15 +138,22 @@ export const redundantInlineWrapper = pattern({
     ],
   },
   rewrite: { flattenInto: 'child' },
-  examples: [
-    {
-      before: '<span><a className="text-blue-500">Link</a></span>',
-      after: '<a className="text-blue-500">Link</a>',
-    },
-    {
-      // The span paints its own underline/text color via a meaningful visual style? No — here a ref
-      // pins the span's element identity (a hard opacity barrier) → not a passthrough.
-      noMatch: '<span ref={spanRef}><a className="text-blue-500">Link</a></span>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // An empty inline span paints nothing and establishes no context → a provably-safe flatten:
+        // the span is removed and its sole child hoisted in place.
+        before: '<span><a className="text-blue-500">Link</a></span>',
+        after: '<a className="text-blue-500">Link</a>',
+      },
+    ],
+    noMatch: [
+      // A ref pins the span's element identity (a hard opacity barrier) → not a passthrough.
+      '<span ref={spanRef}><a className="text-blue-500">Link</a></span>',
+      // The span paints its own background (own visual style) → kept.
+      '<span className="bg-green-200"><a className="text-blue-500">Link</a></span>',
+      // Non-inline display (inline-block) participates in layout differently → kept.
+      '<span className="inline-block"><a className="text-blue-500">Link</a></span>',
+    ],
+  },
 });

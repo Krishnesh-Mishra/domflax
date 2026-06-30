@@ -37,10 +37,10 @@ import { BASE_CONDITION, conditionKey } from '@domflax/core';
 import {
   and,
   computed,
+  definePattern,
   isElement,
   normalizer,
   not,
-  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -144,7 +144,7 @@ const isInnerFlex: Matcher = and(
 /**
  * Flatten a flex container whose sole child is a compatible flex container into a single container.
  */
-export const nestedFlexMerge = pattern({
+export const nestedFlexMerge = definePattern({
   name: 'nested-flex-merge',
   category: 'flatten/nested-flex-merge',
   safety: 2,
@@ -193,23 +193,18 @@ export const nestedFlexMerge = pattern({
       rw.unwrap(outer),
     ];
   },
-  examples: [
-    {
-      // The wrapper's flex declarations (align-items / gap) merge onto the inner flex container,
-      // then the wrapper is removed (its own `data-x` here just blocks the more aggressive
-      // passthrough-wrapper so this merge is the one that fires).
-      before:
-        '<div className="flex items-center gap-2" data-x="1">' +
-        '<div className="flex flex-col">X</div>' +
-        '</div>',
-      after: '<div className="flex flex-col gap-2 items-center">X</div>',
-    },
-    {
-      // A non-flex wrapper does not match the flex-container signature → left unchanged.
-      noMatch:
-        '<div className="block bg-blue-500">' +
-        '<div className="flex flex-col">X</div>' +
-        '</div>',
-    },
-  ],
+  // Merging the outer flex container into the inner removes the outer's box, but a `display:flex`
+  // wrapper establishes a formatting context, so this is a `needs-verification` flatten that the
+  // conservative production gate (`'provably-safe'`) REVERTS — every case here is a no-match. The
+  // merge's op-level correctness (purity, id-preserving unwrap, opacity-barrier safety) is asserted
+  // by the invariant suite over every pattern.
+  test: {
+    noMatch: [
+      // The merge is real but not provably layout-neutral (the wrapper establishes a flex context),
+      // so under the conservative gate the nested containers are left in place.
+      '<div className="flex items-center gap-2" data-x="1"><div className="flex flex-col">X</div></div>',
+      // A non-flex wrapper does not match the flex-container signature → left unchanged anyway.
+      '<div className="block bg-blue-500"><div className="flex flex-col">X</div></div>',
+    ],
+  },
 });

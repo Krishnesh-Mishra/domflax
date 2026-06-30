@@ -42,7 +42,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -148,7 +148,7 @@ function withFoldedRadius(sm: StyleMap, fold: RadiusFold): StyleMap {
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold four equal corner radii into the single `border-radius` shorthand. */
-export const borderRadiusShorthand = pattern({
+export const borderRadiusShorthand = definePattern({
   name: 'border-radius-shorthand',
   category: 'compress/border-radius-shorthand',
   safety: 1,
@@ -180,17 +180,17 @@ export const borderRadiusShorthand = pattern({
       return fold ? withFoldedRadius(computed, fold) : null;
     },
   },
-  examples: [
-    {
-      // The four equal corner longhands collapse to a `border-radius` decl at the IR level; the
-      // minimizing reverse-emit then picks the single shortest utility (`rounded-lg`) that reproduces
-      // it, replacing the four `rounded-{tl,tr,br,bl}-lg` tokens. `bg-red-200` is preserved.
-      before: '<div className="rounded-tl-lg rounded-tr-lg rounded-br-lg rounded-bl-lg bg-red-200">box</div>',
-      after: '<div className="bg-red-200 rounded-lg">box</div>',
-    },
-    {
-      // Corners differ (top corners vs bottom corners) → no all-equal collapse.
-      noMatch: '<div className="rounded-t-lg rounded-b-sm bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal corner longhands collapse to a `border-radius` decl at the IR level; the
+        // minimizing reverse-emit then picks the single shortest utility (`rounded-lg`) that reproduces
+        // it, replacing the four `rounded-{tl,tr,br,bl}-lg` tokens. `bg-red-200` is preserved.
+        before: '<div className="rounded-tl-lg rounded-tr-lg rounded-br-lg rounded-bl-lg bg-red-200">box</div>',
+        after: '<div className="bg-red-200 rounded-lg">box</div>',
+      },
+    ],
+    // Corners differ (top corners vs bottom corners) → no all-equal collapse.
+    noMatch: ['<div className="rounded-t-lg rounded-b-sm bg-red-200">box</div>'],
+  },
 });

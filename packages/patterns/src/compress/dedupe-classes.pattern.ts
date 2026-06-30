@@ -40,7 +40,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -84,7 +84,7 @@ function findRedundantClasses(computed: StyleMap): {
  * Collapse a class list to the minimal token set that yields an identical computed style, by
  * dropping tokens whose declarations are fully overridden by later tokens.
  */
-export const dedupeClasses = pattern({
+export const dedupeClasses = definePattern({
   name: 'dedupe-classes',
   category: 'compress/dedupe-classes',
   safety: 1,
@@ -125,17 +125,17 @@ export const dedupeClasses = pattern({
       return drop;
     },
   },
-  examples: [
-    {
-      // `text-sm` is fully overridden by `text-lg` (both set font-size + line-height). The resolver
-      // records that shadowing in provenance and reports the Tailwind utility as droppable, so the
-      // pattern drops `text-sm`; the reverse-emit then re-derives the minimal set (`text-lg`).
-      before: '<p className="text-sm text-lg">Hi</p>',
-      after: '<p className="text-lg">Hi</p>',
-    },
-    {
-      // Both tokens win a distinct property (no full override) → nothing to dedupe.
-      noMatch: '<p className="text-lg font-bold">Hi</p>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // `text-sm` is fully overridden by `text-lg` (both set font-size + line-height). The resolver
+        // records that shadowing in provenance and reports the Tailwind utility as droppable, so the
+        // pattern drops `text-sm`; the reverse-emit then re-derives the minimal set (`text-lg`).
+        before: '<p className="text-sm text-lg">Hi</p>',
+        after: '<p className="text-lg">Hi</p>',
+      },
+    ],
+    // Both tokens win a distinct property (no full override) → nothing to dedupe.
+    noMatch: ['<p className="text-lg font-bold">Hi</p>'],
+  },
 });

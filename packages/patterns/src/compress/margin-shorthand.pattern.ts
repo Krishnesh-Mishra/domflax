@@ -43,7 +43,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -104,7 +104,7 @@ function withFoldedMargin(sm: StyleMap, marginDecl: StyleDecl): StyleMap {
 /**
  * Fold four margin longhands into one `margin` shorthand on the element's base style block.
  */
-export const marginShorthand = pattern({
+export const marginShorthand = definePattern({
   name: 'margin-shorthand',
   category: 'compress/margin-shorthand',
   safety: 2,
@@ -161,17 +161,17 @@ export const marginShorthand = pattern({
       return withFoldedMargin(computed, marginDecl);
     },
   },
-  examples: [
-    {
-      // The four equal margin longhands collapse to a `margin` shorthand at the IR level, and the
-      // minimizing reverse-emit picks the single shortest utility (`m-2`) reproducing it, replacing
-      // the four `m{t,r,b,l}-2` tokens. `bg-red-200` is preserved.
-      before: '<div className="mt-2 mr-2 mb-2 ml-2 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 m-2">box</div>',
-    },
-    {
-      // Only two margin sides set → the four-longhand `margin` collapse does not apply.
-      noMatch: '<div className="mt-2 mb-2 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal margin longhands collapse to a `margin` shorthand at the IR level, and the
+        // minimizing reverse-emit picks the single shortest utility (`m-2`) reproducing it, replacing
+        // the four `m{t,r,b,l}-2` tokens. `bg-red-200` is preserved.
+        before: '<div className="mt-2 mr-2 mb-2 ml-2 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 m-2">box</div>',
+      },
+    ],
+    // Only two margin sides set → the four-longhand `margin` collapse does not apply.
+    noMatch: ['<div className="mt-2 mb-2 bg-red-200">box</div>'],
+  },
 });

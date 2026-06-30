@@ -12,11 +12,11 @@
  * a descendant might read. Its box is therefore indistinguishable from "not being there", so it can
  * be unwrapped into its sole child.
  *
- * Authored with the declarative {@link pattern} API. The opacity-barrier + selector-safety guards
- * (ref/handlers/dynamic-children/raw-html/combinator/reparent-impact) are applied automatically for
- * every `flatten/*` pattern; the `where` predicates below add the LAYOUT-neutrality requirements
- * specific to this pattern (no non-block display, no box/formatting/stacking context, no containing
- * block, no custom-property coupling, no structural-pseudo targeting).
+ * Authored with the declarative {@link definePattern} API. The opacity-barrier + selector-safety
+ * guards (ref/handlers/dynamic-children/raw-html/combinator/reparent-impact) are applied
+ * automatically for every `flatten/*` pattern; the `where` predicates below add the LAYOUT-neutrality
+ * requirements specific to this pattern (no non-block display, no box/formatting/stacking context, no
+ * containing block, no custom-property coupling, no structural-pseudo targeting).
  */
 
 import type {
@@ -30,7 +30,7 @@ import type {
   StyleMap,
 } from '@domflax/core';
 
-import { not, pattern, type Matcher } from '@domflax/pattern-kit';
+import { definePattern, not, type Matcher } from '@domflax/pattern-kit';
 
 /* ───────────────────────── local matcher helpers ───────────────────────── */
 
@@ -91,7 +91,7 @@ const hasNonBlockDisplay: Matcher = (node, ctx) => {
 /**
  * Flatten a layout-neutral, style-free `<div>` wrapper into its sole element child.
  */
-export const emptyStyleDiv = pattern({
+export const emptyStyleDiv = definePattern({
   name: 'empty-style-div',
   category: 'flatten/empty-style-div',
   safety: 1,
@@ -123,14 +123,17 @@ export const emptyStyleDiv = pattern({
     ],
   },
   rewrite: { flattenInto: 'child' },
-  examples: [
-    {
-      before: '<div><span className="bg-red-200">Hi</span></div>',
-      after: '<span className="bg-red-200">Hi</span>',
-    },
-    {
+  test: {
+    cases: [
+      {
+        // A layout-neutral, style-free block div is a provably-safe flatten → removed, child hoisted.
+        before: '<div><span className="bg-red-200">Hi</span></div>',
+        after: '<span className="bg-red-200">Hi</span>',
+      },
+    ],
+    noMatch: [
       // The wrapper paints its own background (own visual style) → not layout-neutral, kept.
-      noMatch: '<div className="bg-blue-500"><span className="bg-red-200">Hi</span></div>',
-    },
-  ],
+      '<div className="bg-blue-500"><span className="bg-red-200">Hi</span></div>',
+    ],
+  },
 });

@@ -43,7 +43,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -157,7 +157,7 @@ function withFoldedWidth(sm: StyleMap, fold: WidthFold): StyleMap {
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Compress an element's four equal/paired border-width longhands into the shortest shorthand. */
-export const borderShorthand = pattern({
+export const borderShorthand = definePattern({
   name: 'border-shorthand',
   category: 'compress/border-shorthand',
   safety: 1,
@@ -191,17 +191,17 @@ export const borderShorthand = pattern({
       return fold ? withFoldedWidth(computed, fold) : null;
     },
   },
-  examples: [
-    {
-      // The four equal width longhands collapse to a `border-width` shorthand at the IR level, and the
-      // minimizing reverse-emit picks the single shortest utility (`border-2`) that reproduces it,
-      // replacing the four `border-{t,r,b,l}-2` tokens. `bg-red-200` is preserved.
-      before: '<div className="border-t-2 border-r-2 border-b-2 border-l-2 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 border-2">box</div>',
-    },
-    {
-      // Asymmetric widths (top != bottom) cannot fold into a shorthand.
-      noMatch: '<div className="border-t-2 border-r-4 border-b-8 border-l-4 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal width longhands collapse to a `border-width` shorthand at the IR level, and the
+        // minimizing reverse-emit picks the single shortest utility (`border-2`) that reproduces it,
+        // replacing the four `border-{t,r,b,l}-2` tokens. `bg-red-200` is preserved.
+        before: '<div className="border-t-2 border-r-2 border-b-2 border-l-2 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 border-2">box</div>',
+      },
+    ],
+    // Asymmetric widths (top != bottom) cannot fold into a shorthand.
+    noMatch: ['<div className="border-t-2 border-r-4 border-b-8 border-l-4 bg-red-200">box</div>'],
+  },
 });

@@ -24,8 +24,8 @@ import {
 } from '@domflax/core';
 
 import { normalizer } from './normalize';
-import { pattern, type AuthoredPattern } from './pattern';
-import { runAutoTests, runInvariants } from './testing';
+import { definePattern, type AuthoredPattern } from './pattern';
+import { runAutoTests, runInvariants, type Transform } from './testing';
 
 /* ───────────────────────── fixtures ───────────────────────── */
 
@@ -90,9 +90,9 @@ function applyContext(doc: ReturnType<typeof createDocument>): ApplyContext {
   };
 }
 
-/* ───────────────────────── flex-center, re-expressed via pattern() ───────────────────────── */
+/* ───────────────────────── flex-center, re-expressed via definePattern() ───────────────────────── */
 
-const flexCenter: AuthoredPattern = pattern({
+const flexCenter: AuthoredPattern = definePattern({
   name: 'flex-center-wrapper',
   category: 'flatten/flex-center-wrapper',
   safety: 2,
@@ -107,26 +107,29 @@ const flexCenter: AuthoredPattern = pattern({
     paintsNothing: true,
   },
   rewrite: { flattenInto: 'child', childGains: { placeSelf: 'center' } },
-  examples: [
-    {
-      before: '<div style="display:flex;align-items:center;justify-content:center"><Child/></div>',
-      after: '<Child style="place-self:center"/>',
-    },
-    { name: 'leaves a non-centering div alone', noMatch: '<Child/>' },
-  ],
+  test: {
+    cases: [
+      {
+        before: '<div style="display:flex;align-items:center;justify-content:center"><Child/></div>',
+        after: '<Child style="place-self:center"/>',
+      },
+    ],
+    noMatch: ['<Child/>'],
+  },
 });
 
 const PASSES: readonly Pass[] = [
   { phase: 'flatten', category: 'flatten/flex-center-wrapper', patterns: [flexCenter] },
 ];
 
-describe('pattern() — declarative authoring sugar', () => {
-  it('compiles to a valid Pattern with the declared identity', () => {
+describe('definePattern() — declarative authoring', () => {
+  it('compiles to a valid Pattern with the declared identity and co-located test', () => {
     expect(flexCenter.name).toBe('flex-center-wrapper');
     expect(flexCenter.category).toBe('flatten/flex-center-wrapper');
     expect(flexCenter.safety).toBe(2);
     expect(typeof flexCenter.evaluate).toBe('function');
-    expect(flexCenter.examples).toHaveLength(2);
+    expect(flexCenter.test?.cases).toHaveLength(1);
+    expect(flexCenter.test?.noMatch).toHaveLength(1);
   });
 
   it('behaves equivalently to the verbose flex-center-wrapper: flattens onto the sole child', () => {
@@ -158,8 +161,8 @@ describe('pattern() — declarative authoring sugar', () => {
 /* ───────────────────────── harness smoke (exercises ./testing) ───────────────────────── */
 
 // A trivial stand-in for a real frontend transform: collapses the known centering wrapper.
-const stubTransform = (code: string): string =>
+const stubTransform: Transform = (code: string): string =>
   code.includes('display:flex') ? '<Child style="place-self:center"/>' : code;
 
-runAutoTests([flexCenter], { transform: stubTransform });
+runAutoTests([flexCenter], { transformFor: () => stubTransform });
 runInvariants([flexCenter]);

@@ -1,17 +1,25 @@
 /**
- * @domflax/pattern-kit — `pattern()`: a low-boilerplate, declarative authoring surface.
+ * @domflax/pattern-kit — `definePattern()`: THE declarative pattern-authoring surface.
  *
- * `pattern(config)` is pure authoring SUGAR: it compiles down to the existing
- * {@link definePattern}/{@link Pattern} contract (it never replaces the engine). Authors describe
- * the match as a plain DATA object and the rewrite as a named RECIPE; this module maps each key to
- * the existing matcher combinators and op-draft factories, auto-applies the opacity-barrier and
- * selector-safety guards that every `flatten/*` pattern must carry, and threads `doc`/`examples`
- * through. Two escape hatches — a `match` predicate and a `rewrite` function — keep exotic patterns
- * (e.g. ones anchored on a parent fragment) expressible.
+ * `definePattern(config)` is the single public way to author a rewrite pattern: definition AND its
+ * tests are co-located in one call. It compiles down to the private lower-level
+ * {@link import('./define').validatePattern}/{@link Pattern} contract (it never replaces the
+ * engine). Authors describe the match as a plain DATA object and the rewrite as a named RECIPE; this
+ * module maps each key to the existing matcher combinators and op-draft factories, auto-applies the
+ * opacity-barrier and selector-safety guards that every `flatten/*` pattern must carry, and threads
+ * `doc`/`test` through. Two escape hatches — a `match` predicate and a `rewrite` function — keep
+ * exotic patterns (e.g. ones anchored on a parent fragment) expressible.
+ *
+ * The co-located {@link PatternTest} (`provider`/`cssFiles`/`cases`/`noMatch`/`custom`) is carried on
+ * the compiled {@link AuthoredPattern} as `.test`, where the generic harness (`./testing`) reads it:
+ * each `case` asserts `before → after`, each `noMatch` asserts the input is left unchanged, and the
+ * optional `custom` hook runs arbitrary assertions against the built transform.
  *
  * `style` blocks in the declarative match (and in `childGains`/`mergeStyle` recipes) are PLAIN
  * objects (camelCase or kebab keys) auto-normalized into a superset StyleMap via the shared
  * normalizer — authors never import the normalizer or hand-build a StyleMap.
+ *
+ * `pattern` remains exported as a DEPRECATED alias of `definePattern` for backward compatibility.
  */
 
 import type {
@@ -55,7 +63,7 @@ import {
   targetedByCombinator,
   type Matcher,
 } from './combinators';
-import { definePattern } from './define';
+import { validatePattern } from './define';
 import { normalizer } from './normalize';
 
 /* ───────────────────────── public config shapes ───────────────────────── */
@@ -128,10 +136,40 @@ export type RewriteFn = (
   rw: RewriteFactory,
 ) => readonly RewriteOpDraft[] | null;
 
-/** A before/after positive example, or a no-match (left-unchanged) example. */
-export type Example =
-  | { readonly before: string; readonly after: string }
-  | { readonly name?: string; readonly noMatch: string };
+/** A single positive before→after assertion run through the pattern's built transform. */
+export interface PatternTestCase {
+  readonly name?: string;
+  readonly before: string;
+  readonly after: string;
+}
+
+/** Helpers handed to a {@link PatternTest.custom} hook (the built transform + expectation sugar). */
+export interface TestHelpers {
+  /** Run the pattern's transform on `code` (default filename `'X.tsx'`). */
+  readonly transform: (code: string, filename?: string) => string;
+  /** Assert `before` transforms to `after` (whitespace-normalized). */
+  readonly expectTransforms: (before: string, after: string) => void;
+  /** Assert `code` is left unchanged (whitespace-normalized). */
+  readonly expectUnchanged: (code: string) => void;
+}
+
+/**
+ * Co-located test spec for a pattern. The generic harness (`./testing`) builds a transform for the
+ * declared `provider` (default `'tailwind'`; `'custom'` resolves the listed `cssFiles`), then runs
+ * every `case` (`before → after`), every `noMatch` (left unchanged), and the optional `custom` hook.
+ */
+export interface PatternTest {
+  /** Which style provider the harness builds the transform from. Default `'tailwind'`. */
+  readonly provider?: 'tailwind' | 'custom';
+  /** For `provider: 'custom'` — the project stylesheet paths backing the CSS resolver. */
+  readonly cssFiles?: readonly string[];
+  /** Positive before→after assertions. */
+  readonly cases?: readonly PatternTestCase[];
+  /** Inputs the pattern must leave UNCHANGED (barriers, non-matching shapes, safety reverts). */
+  readonly noMatch?: readonly string[];
+  /** Arbitrary extra assertions against the built transform. */
+  readonly custom?: (h: TestHelpers) => void;
+}
 
 export interface PatternConfig {
   readonly name: string;
@@ -140,17 +178,17 @@ export interface PatternConfig {
   readonly priority?: number;
   readonly precondition?: PreconditionSketch;
   readonly doc?: PatternDoc;
-  /** Optional worked examples consumed by the auto-test harness (`./testing`). */
-  readonly examples?: readonly Example[];
+  /** Co-located tests consumed by the generic harness (`./testing`). */
+  readonly test?: PatternTest;
   /** Declarative match DATA, or a raw predicate escape hatch. Defaults to "any element". */
   readonly match?: DeclarativeMatch | MatchFn;
   /** A named rewrite recipe, or a raw op-draft factory escape hatch. */
   readonly rewrite: RewriteRecipe | RewriteFn;
 }
 
-/** A {@link Pattern} that also carries its authored {@link Example}s for the test harness. */
+/** A {@link Pattern} that also carries its co-located {@link PatternTest} for the test harness. */
 export interface AuthoredPattern<C extends Captures = Captures> extends Pattern {
-  readonly examples?: readonly Example[];
+  readonly test?: PatternTest;
   evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult<C> | null;
 }
 
@@ -309,11 +347,11 @@ function compileRewrite(rewrite: RewriteRecipe | RewriteFn): RewriteFn {
 /* ───────────────────────── the public factory ───────────────────────── */
 
 /**
- * Compile a declarative {@link PatternConfig} into a validated {@link AuthoredPattern}. The result
- * is a normal {@link Pattern} (registerable into any {@link import('@domflax/core').Pass}) that also
- * exposes its `examples` for the auto-test harness.
+ * THE declarative pattern-authoring function. Compile a {@link PatternConfig} (definition + co-located
+ * {@link PatternTest}) into a validated {@link AuthoredPattern}: a normal {@link Pattern} (registerable
+ * into any {@link import('@domflax/core').Pass}) that also exposes its `test` for the generic harness.
  */
-export function pattern(config: PatternConfig): AuthoredPattern {
+export function definePattern(config: PatternConfig): AuthoredPattern {
   const matchFn = compileMatch(config.match, config.category);
   const rewriteFn = compileRewrite(config.rewrite);
 
@@ -324,7 +362,7 @@ export function pattern(config: PatternConfig): AuthoredPattern {
     priority: config.priority,
     precondition: config.precondition,
     doc: config.doc,
-    examples: config.examples,
+    test: config.test,
     evaluate(ctx: MatchContext, rw: RewriteFactory): MatchResult | null {
       if (!matchFn(ctx.node as unknown as NodeLike, ctx)) return null;
       const ops = rewriteFn(ctx, rw);
@@ -333,6 +371,11 @@ export function pattern(config: PatternConfig): AuthoredPattern {
     },
   };
 
-  // `definePattern` validates + freezes; the spread preserves `examples` at runtime.
-  return definePattern(spec) as AuthoredPattern;
+  // `validatePattern` validates + freezes; the spread preserves `test` at runtime.
+  return validatePattern(spec) as AuthoredPattern;
 }
+
+/**
+ * @deprecated Use {@link definePattern}. Retained as a thin alias for backward compatibility.
+ */
+export const pattern = definePattern;

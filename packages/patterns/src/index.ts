@@ -2,7 +2,7 @@
  * @domflax/patterns — the built-in rewrite pattern library.
  *
  * Patterns are AUTO-DISCOVERED by file convention: any `*.pattern.ts` under `src/flatten/` or
- * `src/compress/` that default- or named-exports a `pattern()`-built Pattern is picked up by
+ * `src/compress/` that default- or named-exports a `definePattern()`-built Pattern is picked up by
  * `scripts/gen-registry.mjs`, which writes `src/_registry.generated.ts` (a gitignored build
  * artifact, regenerated before build/typecheck/test). Adding a pattern therefore needs no manual
  * edit to this file — just drop in a new `*.pattern.ts`.

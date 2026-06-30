@@ -38,7 +38,7 @@ import {
   hasRef,
   normalizer,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -91,7 +91,7 @@ function withSizeShorthand(sm: StyleMap, value: string, important: boolean): Sty
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold equal `width`/`height` into the `size-*` utility. */
-export const sizeShorthand = pattern({
+export const sizeShorthand = definePattern({
   name: 'size-shorthand',
   category: 'compress/size-shorthand',
   safety: 2,
@@ -128,17 +128,17 @@ export const sizeShorthand = pattern({
       return withSizeShorthand(computed, String(w.value), w.important);
     },
   },
-  examples: [
-    {
-      // Equal width/height collapse to a `size` decl at the IR level; the minimizing reverse-emit
-      // expands `size` back to width+height, finds the single utility covering both (`size-10`), and
-      // replaces the `h-10`+`w-10` pair with it. `bg-red-200` is preserved.
-      before: '<div className="h-10 w-10 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 size-10">box</div>',
-    },
-    {
-      // Width and height differ → no equal-axis collapse.
-      noMatch: '<div className="h-10 w-20 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // Equal width/height collapse to a `size` decl at the IR level; the minimizing reverse-emit
+        // expands `size` back to width+height, finds the single utility covering both (`size-10`), and
+        // replaces the `h-10`+`w-10` pair with it. `bg-red-200` is preserved.
+        before: '<div className="h-10 w-10 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 size-10">box</div>',
+      },
+    ],
+    // Width and height differ → no equal-axis collapse.
+    noMatch: ['<div className="h-10 w-20 bg-red-200">box</div>'],
+  },
 });

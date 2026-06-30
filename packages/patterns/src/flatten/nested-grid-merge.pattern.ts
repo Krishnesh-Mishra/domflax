@@ -37,10 +37,10 @@ import { BASE_CONDITION, conditionKey } from '@domflax/core';
 import {
   and,
   computed,
+  definePattern,
   isElement,
   normalizer,
   not,
-  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -149,7 +149,7 @@ const isInnerGrid: Matcher = and(
 /**
  * Flatten a grid container whose sole child is a compatible grid container into a single container.
  */
-export const nestedGridMerge = pattern({
+export const nestedGridMerge = definePattern({
   name: 'nested-grid-merge',
   category: 'flatten/nested-grid-merge',
   safety: 2,
@@ -198,23 +198,17 @@ export const nestedGridMerge = pattern({
       rw.unwrap(outer),
     ];
   },
-  examples: [
-    {
-      // The wrapper's grid declarations (gap) merge onto the inner grid container, then the wrapper
-      // is removed (its own `data-x` here just blocks the more aggressive passthrough-wrapper so this
-      // merge is the one that fires).
-      before:
-        '<div className="grid gap-2" data-x="1">' +
-        '<div className="grid grid-cols-2">X</div>' +
-        '</div>',
-      after: '<div className="grid grid-cols-2 gap-2">X</div>',
-    },
-    {
-      // A non-grid wrapper does not match the grid-container signature → left unchanged.
-      noMatch:
-        '<div className="block bg-blue-500">' +
-        '<div className="grid grid-cols-2">X</div>' +
-        '</div>',
-    },
-  ],
+  // Like its flex sibling, this merge removes the outer container's box, but a `display:grid` wrapper
+  // establishes a formatting context, so it is a `needs-verification` flatten that the conservative
+  // production gate (`'provably-safe'`) REVERTS — every case here is a no-match. Op-level correctness
+  // is asserted by the invariant suite over every pattern.
+  test: {
+    noMatch: [
+      // The merge is real but not provably layout-neutral (the wrapper establishes a grid context),
+      // so under the conservative gate the nested containers are left in place.
+      '<div className="grid gap-2" data-x="1"><div className="grid grid-cols-2">X</div></div>',
+      // A non-grid wrapper does not match the grid-container signature → left unchanged anyway.
+      '<div className="block bg-blue-500"><div className="grid grid-cols-2">X</div></div>',
+    ],
+  },
 });

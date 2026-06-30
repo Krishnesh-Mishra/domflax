@@ -41,7 +41,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -100,7 +100,7 @@ function withOverscrollShorthand(sm: StyleMap, shorthand: StyleDecl): StyleMap {
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold an equal overscroll-behavior x/y pair into the single `overscroll-behavior` shorthand. */
-export const overscrollBehaviorShorthand = pattern({
+export const overscrollBehaviorShorthand = definePattern({
   name: 'overscroll-behavior-shorthand',
   category: 'compress/overscroll-behavior-shorthand',
   safety: 1,
@@ -152,17 +152,17 @@ export const overscrollBehaviorShorthand = pattern({
       return withOverscrollShorthand(computed, shorthand);
     },
   },
-  examples: [
-    {
-      // Equal x/y axes collapse to an `overscroll-behavior` decl at the IR level; the minimizing
-      // reverse-emit picks the single utility covering both (`overscroll-contain`), replacing the
-      // `overscroll-x-contain`+`overscroll-y-contain` pair. `bg-red-200` is preserved.
-      before: '<div className="overscroll-x-contain overscroll-y-contain bg-red-200">box</div>',
-      after: '<div className="bg-red-200 overscroll-contain">box</div>',
-    },
-    {
-      // Axes differ (x != y) → no equal-axis collapse.
-      noMatch: '<div className="overscroll-x-contain overscroll-y-auto bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // Equal x/y axes collapse to an `overscroll-behavior` decl at the IR level; the minimizing
+        // reverse-emit picks the single utility covering both (`overscroll-contain`), replacing the
+        // `overscroll-x-contain`+`overscroll-y-contain` pair. `bg-red-200` is preserved.
+        before: '<div className="overscroll-x-contain overscroll-y-contain bg-red-200">box</div>',
+        after: '<div className="bg-red-200 overscroll-contain">box</div>',
+      },
+    ],
+    // Axes differ (x != y) → no equal-axis collapse.
+    noMatch: ['<div className="overscroll-x-contain overscroll-y-auto bg-red-200">box</div>'],
+  },
 });

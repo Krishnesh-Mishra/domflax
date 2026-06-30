@@ -37,8 +37,8 @@ import {
   hasDynamicClasses,
   hasEventHandlers,
   hasRef,
+  definePattern,
   not,
-  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -88,7 +88,7 @@ function withGapShorthand(sm: StyleMap, gapDecl: StyleDecl): StyleMap {
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold an equal `row-gap`/`column-gap` pair into the single `gap` shorthand. */
-export const gapShorthand = pattern({
+export const gapShorthand = definePattern({
   name: 'gap-shorthand',
   category: 'compress/gap-shorthand',
   safety: 1,
@@ -137,17 +137,17 @@ export const gapShorthand = pattern({
       return withGapShorthand(computed, gapDecl);
     },
   },
-  examples: [
-    {
-      // Equal row/column gap collapse to a `gap` decl at the IR level; the minimizing reverse-emit
-      // re-expands `gap` to row-gap+column-gap and picks the single utility covering both (`gap-4`),
-      // replacing the `gap-x-4`+`gap-y-4` pair. `bg-red-200` is preserved.
-      before: '<div className="gap-x-4 gap-y-4 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 gap-4">box</div>',
-    },
-    {
-      // Unequal axes (row-gap != column-gap) have no single-value `gap` equivalent → not collapsed.
-      noMatch: '<div className="gap-x-2 gap-y-4 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // Equal row/column gap collapse to a `gap` decl at the IR level; the minimizing reverse-emit
+        // re-expands `gap` to row-gap+column-gap and picks the single utility covering both (`gap-4`),
+        // replacing the `gap-x-4`+`gap-y-4` pair. `bg-red-200` is preserved.
+        before: '<div className="gap-x-4 gap-y-4 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 gap-4">box</div>',
+      },
+    ],
+    // Unequal axes (row-gap != column-gap) have no single-value `gap` equivalent → not collapsed.
+    noMatch: ['<div className="gap-x-2 gap-y-4 bg-red-200">box</div>'],
+  },
 });

@@ -37,7 +37,7 @@ import {
   hasRef,
   normalizer,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -89,7 +89,7 @@ function withBaseDecls(src: StyleMap, baseDecls: ReadonlyMap<CssProperty, StyleD
  * Collapse equal/paired physical inset longhands into the `inset` / `inset-block` / `inset-inline`
  * shorthands on an element's computed style.
  */
-export const insetShorthand = pattern({
+export const insetShorthand = definePattern({
   name: 'inset-shorthand',
   category: 'compress/inset-shorthand',
   safety: 2,
@@ -155,17 +155,17 @@ export const insetShorthand = pattern({
       return withBaseDecls(computed, next);
     },
   },
-  examples: [
-    {
-      // The four equal inset longhands collapse to an `inset` shorthand at the IR level; the
-      // minimizing reverse-emit expands it back to top/right/bottom/left and picks the single utility
-      // covering all four (`inset-0`), replacing the four physical-side tokens. `bg-red-200` survives.
-      before: '<div className="top-0 right-0 bottom-0 left-0 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 inset-0">box</div>',
-    },
-    {
-      // No matching inset pair (all four distinct) → nothing collapses.
-      noMatch: '<div className="top-0 right-1 bottom-2 left-3 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal inset longhands collapse to an `inset` shorthand at the IR level; the
+        // minimizing reverse-emit expands it back to top/right/bottom/left and picks the single utility
+        // covering all four (`inset-0`), replacing the four physical-side tokens. `bg-red-200` survives.
+        before: '<div className="top-0 right-0 bottom-0 left-0 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 inset-0">box</div>',
+      },
+    ],
+    // No matching inset pair (all four distinct) → nothing collapses.
+    noMatch: ['<div className="top-0 right-1 bottom-2 left-3 bg-red-200">box</div>'],
+  },
 });

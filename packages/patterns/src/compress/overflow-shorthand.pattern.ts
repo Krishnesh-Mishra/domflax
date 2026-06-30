@@ -39,7 +39,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -87,7 +87,7 @@ function withOverflowShorthand(sm: StyleMap, overflowDecl: StyleDecl): StyleMap 
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold an equal `overflow-x`/`overflow-y` pair into the single `overflow` shorthand. */
-export const overflowShorthand = pattern({
+export const overflowShorthand = definePattern({
   name: 'overflow-shorthand',
   category: 'compress/overflow-shorthand',
   safety: 1,
@@ -136,17 +136,17 @@ export const overflowShorthand = pattern({
       return withOverflowShorthand(computed, overflowDecl);
     },
   },
-  examples: [
-    {
-      // Equal overflow axes collapse to an `overflow` decl at the IR level; the minimizing
-      // reverse-emit picks the single utility covering both (`overflow-auto`), replacing the
-      // `overflow-x-auto`+`overflow-y-auto` pair. `bg-red-200` is preserved.
-      before: '<div className="overflow-x-auto overflow-y-auto bg-red-200">box</div>',
-      after: '<div className="bg-red-200 overflow-auto">box</div>',
-    },
-    {
-      // Mismatched axes (overflow-x != overflow-y) have no single-keyword equivalent → not collapsed.
-      noMatch: '<div className="overflow-x-auto overflow-y-hidden bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // Equal overflow axes collapse to an `overflow` decl at the IR level; the minimizing
+        // reverse-emit picks the single utility covering both (`overflow-auto`), replacing the
+        // `overflow-x-auto`+`overflow-y-auto` pair. `bg-red-200` is preserved.
+        before: '<div className="overflow-x-auto overflow-y-auto bg-red-200">box</div>',
+        after: '<div className="bg-red-200 overflow-auto">box</div>',
+      },
+    ],
+    // Mismatched axes (overflow-x != overflow-y) have no single-keyword equivalent → not collapsed.
+    noMatch: ['<div className="overflow-x-auto overflow-y-hidden bg-red-200">box</div>'],
+  },
 });

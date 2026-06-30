@@ -42,7 +42,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -148,7 +148,7 @@ function withFoldedScrollMargin(sm: StyleMap, fold: ScrollMarginFold): StyleMap 
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold four equal scroll-margin sides into the single `scroll-margin` shorthand. */
-export const scrollMarginShorthand = pattern({
+export const scrollMarginShorthand = definePattern({
   name: 'scroll-margin-shorthand',
   category: 'compress/scroll-margin-shorthand',
   safety: 1,
@@ -180,17 +180,17 @@ export const scrollMarginShorthand = pattern({
       return fold ? withFoldedScrollMargin(computed, fold) : null;
     },
   },
-  examples: [
-    {
-      // The four equal scroll-margin longhands collapse to a `scroll-margin` decl at the IR level; the
-      // minimizing reverse-emit then picks the single shortest utility (`scroll-m-4`) that reproduces
-      // it, replacing the four `scroll-m{t,r,b,l}-4` tokens. `bg-red-200` is preserved.
-      before: '<div className="scroll-mt-4 scroll-mr-4 scroll-mb-4 scroll-ml-4 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 scroll-m-4">box</div>',
-    },
-    {
-      // Sides differ (top != bottom) → no all-equal collapse.
-      noMatch: '<div className="scroll-mt-2 scroll-mr-4 scroll-mb-8 scroll-ml-4 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal scroll-margin longhands collapse to a `scroll-margin` decl at the IR level; the
+        // minimizing reverse-emit then picks the single shortest utility (`scroll-m-4`) that reproduces
+        // it, replacing the four `scroll-m{t,r,b,l}-4` tokens. `bg-red-200` is preserved.
+        before: '<div className="scroll-mt-4 scroll-mr-4 scroll-mb-4 scroll-ml-4 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 scroll-m-4">box</div>',
+      },
+    ],
+    // Sides differ (top != bottom) → no all-equal collapse.
+    noMatch: ['<div className="scroll-mt-2 scroll-mr-4 scroll-mb-8 scroll-ml-4 bg-red-200">box</div>'],
+  },
 });

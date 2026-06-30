@@ -1,11 +1,12 @@
 /**
- * @domflax/pattern-kit/testing — the automatic pattern test harness.
+ * @domflax/pattern-kit/testing — the generic pattern test harness.
  *
  * Two suites, both frontend-agnostic:
  *
- *   • {@link runAutoTests} — drives every authored `example` through an INJECTED `transform`
- *     (so pattern-kit never depends on a concrete frontend): positive `{ before, after }` examples
- *     must transform to `after`; `{ noMatch }` examples must come back unchanged.
+ *   • {@link runAutoTests} — drives every pattern's co-located {@link PatternTest} through an
+ *     INJECTED, per-pattern `transform` (so pattern-kit never depends on a concrete frontend): each
+ *     `case` must transform `before → after`; each `noMatch` must come back unchanged; the optional
+ *     `custom` hook runs arbitrary assertions against the built transform.
  *
  *   • {@link runInvariants} — a pure IR-level suite needing only {@link @domflax/core} (no browser,
  *     no frontend): for each pattern it asserts purity (same input ⇒ same ops twice), that no op
@@ -58,7 +59,7 @@ import {
 } from '@domflax/core';
 
 import { normalizer } from './normalize';
-import type { AuthoredPattern, Example } from './pattern';
+import type { AuthoredPattern, TestHelpers } from './pattern';
 
 /* ───────────────────────── auto-test harness ───────────────────────── */
 
@@ -66,12 +67,17 @@ import type { AuthoredPattern, Example } from './pattern';
 export type Transform = (code: string, filename: string) => string;
 
 export interface AutoTestOptions {
-  readonly transform: Transform;
+  /**
+   * Build the transform a given pattern's co-located tests run through. The harness is frontend-
+   * agnostic, so the caller (which knows the providers/resolvers) supplies this: typically a Tailwind
+   * transform by default and a custom-CSS one when `pattern.test.provider === 'custom'`.
+   */
+  readonly transformFor: (pattern: AuthoredPattern) => Transform;
   /** Filename passed to `transform`. Default `'X.tsx'`. */
   readonly filename?: string;
 }
 
-/** A pattern carrying optional authored examples (what {@link runAutoTests} consumes). */
+/** A pattern carrying an optional co-located test spec (what {@link runAutoTests} consumes). */
 export type TestablePattern = AuthoredPattern;
 
 /** Whitespace-insensitive comparison key. */
@@ -80,41 +86,58 @@ function ws(code: string): string {
 }
 
 /**
- * For each pattern: run every positive `example` through `transform` and assert the (whitespace-
- * normalized) output equals `after`; assert each `noMatch` example is returned unchanged.
+ * For each pattern, read its co-located `.test` and, through the per-pattern transform from
+ * `transformFor`: run every `case` (assert `before → after`, whitespace-normalized), every `noMatch`
+ * (assert the input is returned unchanged), and the optional `custom` hook.
  */
 export function runAutoTests(
   patterns: readonly TestablePattern[],
   options: AutoTestOptions,
 ): void {
   const filename = options.filename ?? 'X.tsx';
-  const { transform } = options;
 
   for (const p of patterns) {
-    const examples = p.examples ?? [];
-    describe(`${p.name} (auto)`, () => {
-      if (examples.length === 0) {
-        it('declares no examples', () => {
-          expect(examples.length).toBe(0);
+    const test = p.test;
+    const cases = test?.cases ?? [];
+    const noMatch = test?.noMatch ?? [];
+
+    describe(`${p.name} (cases)`, () => {
+      const transform = options.transformFor(p);
+      const helpers: TestHelpers = {
+        transform: (code, file) => transform(code, file ?? filename),
+        expectTransforms: (before, after) => {
+          expect(ws(transform(before, filename))).toBe(ws(after));
+        },
+        expectUnchanged: (code) => {
+          expect(ws(transform(code, filename))).toBe(ws(code));
+        },
+      };
+
+      if (cases.length === 0 && noMatch.length === 0 && !test?.custom) {
+        it('declares co-located tests', () => {
+          // A pattern with no cases/noMatch/custom is still exercised by runInvariants; flag here so
+          // an author who forgot to co-locate tests sees an explicit (failing) reminder.
+          expect(test).toBeDefined();
         });
         return;
       }
 
-      let positive = 0;
-      let negative = 0;
-      for (const ex of examples) {
-        if ('noMatch' in ex) {
-          negative += 1;
-          const label = ex.name ?? `leaves no-match case #${negative} unchanged`;
-          it(label, () => {
-            expect(ws(transform(ex.noMatch, filename))).toBe(ws(ex.noMatch));
-          });
-        } else {
-          positive += 1;
-          it(`transforms positive case #${positive}`, () => {
-            expect(ws(transform(ex.before, filename))).toBe(ws(ex.after));
-          });
-        }
+      cases.forEach((c, i) => {
+        it(c.name ?? `transforms case #${i + 1}`, () => {
+          helpers.expectTransforms(c.before, c.after);
+        });
+      });
+
+      noMatch.forEach((code, i) => {
+        it(`leaves no-match case #${i + 1} unchanged`, () => {
+          helpers.expectUnchanged(code);
+        });
+      });
+
+      if (test?.custom) {
+        it('custom assertions', () => {
+          test.custom!(helpers);
+        });
       }
     });
   }

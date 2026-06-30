@@ -32,7 +32,7 @@ import type {
   NodeMeta,
 } from '@domflax/core';
 
-import { hasDynamicClasses, not, pattern, type Matcher } from '@domflax/pattern-kit';
+import { definePattern, hasDynamicClasses, not, type Matcher } from '@domflax/pattern-kit';
 
 /* ───────────────────────── local meta/attr/selector matchers ───────────────────────── */
 
@@ -80,7 +80,7 @@ const targetedByStructuralPseudo: Matcher = (node, ctx) => {
  * Flatten a `display:contents` wrapper (a box that generates no box) into its sole element child,
  * folding any inheritable styles down first so inherited values survive the removal.
  */
-export const displayContentsWrapper = pattern({
+export const displayContentsWrapper = definePattern({
   name: 'display-contents-wrapper',
   category: 'flatten/display-contents-wrapper',
   safety: 2,
@@ -115,14 +115,18 @@ export const displayContentsWrapper = pattern({
     ],
   },
   rewrite: { flattenInto: 'child' },
-  examples: [
-    {
-      before: '<div className="contents"><a className="text-blue-500">Link</a></div>',
-      after: '<a className="text-blue-500">Link</a>',
-    },
-    {
+  test: {
+    cases: [
+      {
+        // `display:contents` generates no box, so removing it is provably layout-identical → the
+        // wrapper is flattened even under the conservative gate; the child is hoisted.
+        before: '<div className="contents"><a className="text-blue-500">Link</a></div>',
+        after: '<a className="text-blue-500">Link</a>',
+      },
+    ],
+    noMatch: [
       // A ref pins the wrapper's element identity (a hard opacity barrier) → not a passthrough.
-      noMatch: '<div className="contents" ref={rootRef}><a className="text-blue-500">Link</a></div>',
-    },
-  ],
+      '<div className="contents" ref={rootRef}><a className="text-blue-500">Link</a></div>',
+    ],
+  },
 });

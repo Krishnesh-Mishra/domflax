@@ -39,7 +39,7 @@ import {
   hasEventHandlers,
   hasRef,
   not,
-  pattern,
+  definePattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -96,7 +96,7 @@ function withBaseDecls(sm: StyleMap, baseDecls: ReadonlyMap<CssProperty, StyleDe
 /* ───────────────────────── the pattern ───────────────────────── */
 
 /** Fold matching align/justify pairs into the `place-items` / `place-content` shorthands. */
-export const placeShorthand = pattern({
+export const placeShorthand = definePattern({
   name: 'place-shorthand',
   category: 'compress/place-shorthand',
   safety: 1,
@@ -154,17 +154,17 @@ export const placeShorthand = pattern({
       return withBaseDecls(computed, next);
     },
   },
-  examples: [
-    {
-      // The matching items pair collapses to a `place-items` decl at the IR level; the minimizing
-      // reverse-emit picks the single utility covering both (`place-items-center`), replacing the
-      // `items-center`+`justify-items-center` pair. `bg-red-200` is preserved.
-      before: '<div className="items-center justify-items-center bg-red-200">box</div>',
-      after: '<div className="bg-red-200 place-items-center">box</div>',
-    },
-    {
-      // Mismatched alignment (align-items != justify-items, no content pair) → nothing collapses.
-      noMatch: '<div className="items-center justify-items-start bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The matching items pair collapses to a `place-items` decl at the IR level; the minimizing
+        // reverse-emit picks the single utility covering both (`place-items-center`), replacing the
+        // `items-center`+`justify-items-center` pair. `bg-red-200` is preserved.
+        before: '<div className="items-center justify-items-center bg-red-200">box</div>',
+        after: '<div className="bg-red-200 place-items-center">box</div>',
+      },
+    ],
+    // Mismatched alignment (align-items != justify-items, no content pair) → nothing collapses.
+    noMatch: ['<div className="items-center justify-items-start bg-red-200">box</div>'],
+  },
 });

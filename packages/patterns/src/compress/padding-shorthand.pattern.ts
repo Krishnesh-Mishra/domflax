@@ -38,8 +38,8 @@ import {
   hasDynamicClasses,
   hasEventHandlers,
   hasRef,
+  definePattern,
   not,
-  pattern,
   targetedByCombinator,
   type Matcher,
 } from '@domflax/pattern-kit';
@@ -149,7 +149,7 @@ function withFoldedPadding(sm: StyleMap, fold: PaddingFold): StyleMap {
 /**
  * Compress an element's four equal/paired padding longhands into the shortest `padding` shorthand.
  */
-export const paddingShorthand = pattern({
+export const paddingShorthand = definePattern({
   name: 'padding-shorthand',
   category: 'compress/padding-shorthand',
   safety: 1,
@@ -181,17 +181,17 @@ export const paddingShorthand = pattern({
       return fold ? withFoldedPadding(computed, fold) : null;
     },
   },
-  examples: [
-    {
-      // The four equal padding longhands collapse to a `padding` shorthand at the IR level, and the
-      // minimizing reverse-emit picks the single shortest utility (`p-4`) that reproduces it,
-      // replacing the four `p{t,r,b,l}-4` tokens. `bg-red-200` is preserved (its order is stable).
-      before: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
-      after: '<div className="bg-red-200 p-4">box</div>',
-    },
-    {
-      // Asymmetric padding (top != bottom) cannot fold into a shorthand.
-      noMatch: '<div className="pt-2 pr-4 pb-8 pl-4 bg-red-200">box</div>',
-    },
-  ],
+  test: {
+    cases: [
+      {
+        // The four equal padding longhands collapse to a `padding` shorthand at the IR level, and the
+        // minimizing reverse-emit picks the single shortest utility (`p-4`) that reproduces it,
+        // replacing the four `p{t,r,b,l}-4` tokens. `bg-red-200` is preserved (its order is stable).
+        before: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
+        after: '<div className="bg-red-200 p-4">box</div>',
+      },
+    ],
+    // Asymmetric padding (top != bottom) cannot fold into a shorthand → left unchanged.
+    noMatch: ['<div className="pt-2 pr-4 pb-8 pl-4 bg-red-200">box</div>'],
+  },
 });

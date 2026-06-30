@@ -1,10 +1,15 @@
 /**
- * @domflax/pattern-kit — `definePattern`.
+ * @domflax/pattern-kit — `validatePattern` (INTERNAL).
  *
- * A small, eager validator + identity wrapper that turns an author-supplied {@link Pattern} spec
- * into a frozen, contract-checked Pattern. Catching shape errors here (bad category/phase, missing
+ * A small, eager validator + identity wrapper that turns a lowered {@link Pattern} spec into a
+ * frozen, contract-checked Pattern. Catching shape errors here (bad category/phase, missing
  * `evaluate`, out-of-range safety) keeps the pass-manager's hot loop free of defensive checks and
  * gives authors an immediate, actionable error at module-load time.
+ *
+ * This is the PRIVATE lower-level core: it is consumed only by the declarative
+ * {@link import('./pattern').definePattern} authoring surface (which compiles a high-level config
+ * down to a {@link Pattern} and then runs it through this validator). It is intentionally NOT part
+ * of the public package surface — authors use `definePattern` instead.
  */
 
 import type { PassPhase, Pattern, SafetyLevel } from '@domflax/core';
@@ -18,9 +23,10 @@ function fail(name: string, why: string): never {
 
 /**
  * Validate and freeze a {@link Pattern}. Throws on any contract violation; otherwise returns the
- * (shallow-frozen) spec unchanged so it can be registered into a {@link Pass}.
+ * (shallow-frozen) spec unchanged so it can be registered into a {@link Pass}. INTERNAL — see the
+ * module header; authors call the declarative {@link import('./pattern').definePattern}.
  */
-export function definePattern(spec: Pattern): Pattern {
+export function validatePattern(spec: Pattern): Pattern {
   if (spec == null || typeof spec !== 'object') {
     throw new Error('definePattern: spec must be an object');
   }

@@ -11,11 +11,11 @@
  * Such a `<div>` is pure DOM noise: removing it and hoisting the child is invisible to both paint
  * and layout.
  *
- * Authored with the declarative {@link pattern} API. The opacity-barrier + selector-safety guards
- * (ref/handlers/dynamic-children/raw-html/combinator/reparent-impact) are applied automatically for
- * every `flatten/*` pattern; the `where` predicates add the passthrough-specific requirements (no
- * box/formatting/stacking context, no own attrs, no dynamic/spread classes, not a component, not a
- * structural-pseudo subject).
+ * Authored with the declarative {@link definePattern} API. The opacity-barrier + selector-safety
+ * guards (ref/handlers/dynamic-children/raw-html/combinator/reparent-impact) are applied
+ * automatically for every `flatten/*` pattern; the `where` predicates add the passthrough-specific
+ * requirements (no box/formatting/stacking context, no own attrs, no dynamic/spread classes, not a
+ * component, not a structural-pseudo subject).
  */
 
 import type {
@@ -27,7 +27,7 @@ import type {
   NodeMeta,
 } from '@domflax/core';
 
-import { hasDynamicClasses, not, pattern, type Matcher } from '@domflax/pattern-kit';
+import { definePattern, hasDynamicClasses, not, type Matcher } from '@domflax/pattern-kit';
 
 /* ───────────────────────── local meta/attr/selector matchers ───────────────────────── */
 
@@ -86,7 +86,7 @@ const targetedByStructuralPseudo: Matcher = (node, ctx) => {
  * Flatten a do-nothing `<div>` wrapper into its sole element child, folding any inheritable styles
  * down first so inherited values survive the box removal.
  */
-export const passthroughWrapper = pattern({
+export const passthroughWrapper = definePattern({
   name: 'passthrough-wrapper',
   category: 'flatten/passthrough-wrapper',
   safety: 2,
@@ -117,14 +117,21 @@ export const passthroughWrapper = pattern({
     ],
   },
   rewrite: { flattenInto: 'child' },
-  examples: [
-    {
-      before: '<div className="flex"><a className="bg-red-200">Link</a></div>',
-      after: '<a className="bg-red-200">Link</a>',
-    },
-    {
+  test: {
+    cases: [
+      {
+        // A plain, style-free wrapper paints nothing and establishes no context → a provably-safe
+        // flatten under the conservative gate: the wrapper is removed and its sole child hoisted.
+        before: '<div><a className="bg-red-200">Link</a></div>',
+        after: '<a className="bg-red-200">Link</a>',
+      },
+    ],
+    noMatch: [
       // A ref pins the wrapper's element identity (a hard opacity barrier) → not a passthrough.
-      noMatch: '<div ref={rootRef}><a className="bg-red-200">Link</a></div>',
-    },
-  ],
+      '<div ref={rootRef}><a className="bg-red-200">Link</a></div>',
+      // A `display:flex` wrapper establishes a formatting context, so removing its box is NOT
+      // provably layout-neutral → the conservative gate leaves it in place.
+      '<div className="flex"><a className="bg-red-200">Link</a></div>',
+    ],
+  },
 });
