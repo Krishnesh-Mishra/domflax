@@ -654,6 +654,26 @@ class TailwindResolver implements StyleResolver {
       : { classes, exact, warnings: [] };
   }
 
+  /**
+   * Generate a CSS stylesheet that defines `classes`, so a verifier can render a subtree with the
+   * real Tailwind styling applied. Backed by the same engine `resolve` uses (`generate(candidates)`),
+   * serialized to plain CSS. Returns `''` when the engine is unavailable or generates nothing.
+   */
+  cssFor(classes: readonly string[]): string {
+    if (!this.#engine) return '';
+    const tokens = [...new Set(classes)].filter((c) => c.length > 0);
+    if (tokens.length === 0) return '';
+    try {
+      return this.#engine
+        .generate(tokens)
+        .map((n) => serializeCssNode(n))
+        .filter((s) => s.length > 0)
+        .join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   selectorUsage(token: string): SelectorUsage {
     // No project selector graph yet, so we cannot know how a CUSTOM (non-Tailwind) class is
     // referenced — treat it as load-bearing (preserved verbatim). A resolver-OWNED utility, by
@@ -668,6 +688,34 @@ class TailwindResolver implements StyleResolver {
     if (!baseOnly) return OPAQUE_USAGE;
     return DROPPABLE_USAGE;
   }
+}
+
+/* ───────────────────────── CSS serialization (cssFor) ───────────────────────── */
+
+/** Serialize one engine-emitted node (rule / atrule / decl) into plain CSS text. */
+function serializeCssNode(node: TwNode): string {
+  if (node.type === 'decl') {
+    const d = node as TwGeneratedDecl;
+    if (typeof d.value !== 'string') return '';
+    return `${d.prop}:${d.value}${d.important === true ? ' !important' : ''}`;
+  }
+  if (node.type === 'rule') {
+    const r = node as TwGeneratedRule;
+    const body = (r.nodes ?? [])
+      .map((c) => serializeCssNode(c))
+      .filter((s) => s.length > 0)
+      .join(';');
+    return `${r.selector}{${body}}`;
+  }
+  if (node.type === 'atrule') {
+    const a = node as TwGeneratedAtRule;
+    const body = (a.nodes ?? [])
+      .map((c) => serializeCssNode(c))
+      .filter((s) => s.length > 0)
+      .join('');
+    return `@${a.name} ${a.params}{${body}}`;
+  }
+  return '';
 }
 
 /* ───────────────────────── emit-side shorthand expansion ───────────────────────── */

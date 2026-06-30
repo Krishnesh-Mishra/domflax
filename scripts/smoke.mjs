@@ -65,10 +65,12 @@ const check = (label, cond) => {
   check('real module kept `export default function Card`', out.includes('export default function Card({ title })'));
   check('real module kept the return statement', out.includes('return ('));
   check('real module kept the {title} hole', out.includes('{title}'));
-  // …and the optimization still applied through the built dist.
-  check('real module flattened the wrapper', !out.includes('justify-center') && !out.includes('w-full'));
-  check('real module pushed place-self-center onto the child', out.includes('place-self-center'));
-  check('real module compressed px-4 py-4 → p-4', out.includes('p-4') && !out.includes('px-4') && !out.includes('py-4'));
+  // CONSERVATIVE DEFAULT (verify off): the flex-centering wrapper is a `needs-verification` flatten,
+  // so it is PRESERVED — domflax never changes rendering by default — and the child's padding is
+  // kept verbatim (the `{title}` div has a dynamic child, so it is neither flattened nor compressed).
+  check('real module PRESERVED the flex wrapper (conservative default)', out.includes('justify-center'));
+  check('real module did NOT push place-self-center (verify off)', !out.includes('place-self-center'));
+  check('real module preserved child padding (px-4 py-4 not dropped)', out.includes('px-4'));
   check('real module kept bg-white', out.includes('bg-white'));
   // The output is a complete module — re-transforming it must not throw.
   let reok = true;
@@ -76,7 +78,8 @@ const check = (label, cond) => {
   check('real module output is itself a valid module (re-transforms cleanly)', reok);
 }
 
-// 1) Flex-centering wrapper flattens AND the centering intent survives as place-self-center.
+// 1) Flex-centering wrapper is PRESERVED by default (needs-verification), but the child still
+//    compresses (compress is independent of the flatten gate): h-10 w-10 → size-10.
 {
   const code =
     '<div className="w-full h-full flex justify-center items-center">' +
@@ -84,12 +87,29 @@ const check = (label, cond) => {
     '</div>';
   const { code: out } = createDomflax().transform(code, 'App.tsx');
   console.log('  [flex-center] out:', out);
-  check('wrapper flattened (no justify-center)', !out.includes('justify-center'));
+  check('wrapper PRESERVED (justify-center kept, no rendering change)', out.includes('justify-center'));
+  check('no place-self-center pushed (verify off is conservative)', !out.includes('place-self-center'));
   check('child kept bg-red-200', out.includes('bg-red-200'));
-  check('REVERSE-EMIT produced place-self-center (the regression)', out.includes('place-self-center'));
   check('kept text content', out.includes('Hello'));
-  // The flattened child's equal width/height (`h-10 w-10`) compresses to the shorter `size-10`.
+  // The child's equal width/height (`h-10 w-10`) still compresses to the shorter `size-10`.
   check('COMPRESS shortened h-10 w-10 → size-10 in built dist', out.includes('size-10') && !out.includes('h-10') && !out.includes('w-10'));
+}
+
+// 1a) A PROVABLY-SAFE flatten (display:contents wrapper contributes nothing) IS applied by default.
+{
+  const code = '<div className="contents"><a className="text-blue-500">L</a></div>';
+  const { code: out } = createDomflax().transform(code, 'App.tsx');
+  console.log('  [provably-safe contents] out:', out);
+  check('provably-safe flatten applied (contents wrapper removed)', !out.includes('contents'));
+  check('provably-safe flatten kept the child', out.includes('text-blue-500'));
+}
+
+// 1b-static) The transform is SYNC + browser-free: no async/close surface is exposed.
+{
+  const engine = createDomflax();
+  check('built dist transform is sync (returns a result object, not a Promise)', typeof engine.transform === 'function' && !(engine.transform('<div/>', 'App.tsx') instanceof Promise));
+  check('built dist does NOT expose transformAsync (static-only)', typeof engine.transformAsync === 'undefined');
+  check('built dist does NOT expose close (no browser to release)', typeof engine.close === 'undefined');
 }
 
 // 1b) COMPRESS actually shortens output end-to-end in the built dist: px-4 py-4 → p-4.
@@ -200,9 +220,24 @@ const check = (label, cond) => {
   check('CLI bin executes exactly once (no double-invocation)', runs === 1);
 }
 
+// 9) STATIC-ONLY: the user transform entry (index.cjs) must be browser-free — it must neither bundle
+//    nor require playwright / @domflax/verify. Asserts against the built file's contents.
+{
+  const { readFileSync } = await import('node:fs');
+  const idxSrc = readFileSync(distEntry, 'utf8');
+  check('index.cjs does not reference playwright', !/playwright/i.test(idxSrc));
+  check('index.cjs does not reference chromium', !/chromium/i.test(idxSrc));
+  check('index.cjs does not require @domflax/verify', !/@domflax\/verify/.test(idxSrc));
+  check('index.cjs has no browser-launch hook', !/launchBrowser|verifyEquivalence|createFlattenVerifier/.test(idxSrc));
+  // The cli.cjs bundled into the published package must likewise be browser-free.
+  const cliSrc = readFileSync(path.join(here, '..', 'packages', 'domflax', 'dist', 'cli.cjs'), 'utf8');
+  check('cli.cjs does not reference playwright', !/playwright/i.test(cliSrc));
+  check('cli.cjs does not require @domflax/verify', !/@domflax\/verify/.test(cliSrc));
+}
+
 if (failures.length > 0) {
   console.error(`\nSMOKE FAIL: ${failures.length} assertion(s) failed:`);
   for (const f of failures) console.error(`  - ${f}`);
   process.exit(1);
 }
-console.log('\nSMOKE PASS: built dist transform yields place-self-center and respects the onClick barrier.');
+console.log('\nSMOKE PASS: built dist is conservative by default (no rendering change), applies provably-safe flattens, compresses, and respects the onClick barrier.');

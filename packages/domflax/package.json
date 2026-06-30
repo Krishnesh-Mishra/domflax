@@ -59,15 +59,11 @@
     "prepublishOnly": "node ../../scripts/sync-package-docs.mjs && npm run build"
   },
   "peerDependencies": {
-    "playwright": "*",
     "tailwindcss": "^3.4.0",
     "postcss": "^8.4.0",
     "postcss-selector-parser": "^6.0.0 || ^7.0.0"
   },
   "peerDependenciesMeta": {
-    "playwright": {
-      "optional": true
-    },
     "tailwindcss": {
       "optional": true
     },

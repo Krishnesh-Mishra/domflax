@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 
 import { createDomflax } from './index';
 
-/* ───────────────────────── end-to-end transform (parse → resolve → flatten → emit) ───────────────────────── */
+/* ───────────────────────── verify OFF (default) — conservative, never changes rendering ───────────────────────── */
 
-describe('createDomflax().transform — end to end', () => {
-  it('flattens a flex-centering wrapper, pushing place-self-center onto the surviving child', () => {
+describe('createDomflax().transform — verify off (default) is conservative', () => {
+  it('does NOT flatten a flex-centering wrapper (needs-verification: display:flex establishes context)', () => {
     const code =
       '<div className="w-full h-full flex justify-center items-center">' +
       '<div className="h-10 w-10 bg-red-200">Hello</div>' +
@@ -13,23 +13,50 @@ describe('createDomflax().transform — end to end', () => {
 
     const { code: out } = createDomflax().transform(code, 'App.tsx');
 
-    // wrapper is gone …
-    expect(out).not.toContain('w-full');
-    expect(out).not.toContain('justify-center');
-    expect(out).not.toContain('items-center');
+    // The wrapper SURVIVES — its centering is preserved, no flatten happened.
+    expect(out).toContain('justify-center');
+    expect(out).toContain('items-center');
+    expect(out).not.toContain('place-self-center');
 
-    // … the child survived, keeping its own styles — and its equal width/height (`h-10 w-10`)
-    //     was compressed to the shorter `size-10` by the minimizing reverse-emit.
+    // The child survived and was still compressed (compress is independent of the flatten gate):
+    // h-10 w-10 → size-10.
     expect(out).toContain('size-10');
-    expect(out).not.toContain('h-10');
-    expect(out).not.toContain('w-10');
     expect(out).toContain('bg-red-200');
-
-    // … gained the centering intent as a class …
-    expect(out).toContain('place-self-center');
-
-    // … and kept its text content.
     expect(out).toContain('Hello');
+  });
+
+  it('does NOT flatten a padding wrapper (px-4 py-4 … flex …) — dropping padding would shift the child', () => {
+    const code =
+      '<div className="px-4 py-4 flex items-center justify-center">' +
+      '<div className="w-4 h-4 bg-red-500">x</div>' +
+      '</div>';
+
+    const { code: out } = createDomflax().transform(code, 'App.tsx');
+
+    // Wrapper preserved; its padding survives (compressed px-4 py-4 → p-4) — NOT dropped.
+    expect(out).toContain('p-4');
+    expect(out).not.toContain('place-self-center');
+    expect(out).toContain('bg-red-500');
+  });
+
+  it('DOES apply a provably-safe flatten (display:contents wrapper contributes nothing)', () => {
+    const code = '<div className="contents"><a className="text-blue-500">Link</a></div>';
+    const { code: out } = createDomflax().transform(code, 'App.tsx');
+
+    // The display:contents box generates no box of its own ⇒ removing it is layout-identical.
+    expect(out).not.toContain('contents');
+    expect(out).toContain('text-blue-500');
+    expect(out).toContain('Link');
+  });
+
+  it('DOES apply a provably-safe flatten (empty-style div wrapping a single child)', () => {
+    const code = '<div><span className="bg-red-200">Hi</span></div>';
+    const { code: out } = createDomflax().transform(code, 'App.tsx');
+
+    // A layout-neutral, style-free div is hoisted into its sole child.
+    expect(out).toContain('<span');
+    expect(out).toContain('bg-red-200');
+    expect(out).toContain('Hi');
   });
 
   it('compresses px-4 py-4 to the single p-4 utility (reverse-emit minimization)', () => {
@@ -50,15 +77,10 @@ describe('createDomflax().transform — end to end', () => {
 
     const { code: out } = createDomflax().transform(code, 'App.tsx');
 
-    // wrapper survives intact: its classes and handler are still present …
     expect(out).toContain('justify-center');
     expect(out).toContain('items-center');
     expect(out).toContain('onClick={handleClick}');
-
-    // … and the centering intent was NOT pushed down (no flattening happened).
     expect(out).not.toContain('place-self-center');
-
-    // child is still there.
     expect(out).toContain('bg-red-200');
     expect(out).toContain('Hello');
   });
@@ -73,10 +95,7 @@ describe('createDomflax().transform — end to end', () => {
 
 /* ───────────────────────── REAL-MODULE round-trip (the regression that hid the bug) ───────────────────────── */
 
-// The bare-fragment fixtures above can't catch a backend that drops the surrounding module. These
-// feed a COMPLETE module (imports + `export default function` + hooks + `return (…)` + `{title}` hole)
-// and assert BOTH that the optimization applied AND that every surrounding byte survived.
-describe('createDomflax().transform — full modules survive surgery', () => {
+describe('createDomflax().transform — full modules survive surgery (verify off)', () => {
   const CARD = [
     "import React from 'react';",
     '',
@@ -90,27 +109,23 @@ describe('createDomflax().transform — full modules survive surgery', () => {
     '',
   ].join('\n');
 
-  it('flattens the wrapper and compresses px-4 py-4 → p-4 while keeping import/export/function/{title}', () => {
+  it('keeps the flex wrapper (no rendering change) and preserves the child padding verbatim', () => {
     const { code: out } = createDomflax().transform(CARD, 'Card.tsx');
 
     // surrounding module survives …
     expect(out).toContain("import React from 'react';");
     expect(out).toContain('export default function Card({ title })');
     expect(out).toContain('return (');
-    expect(out).toContain('{title}'); // the dynamic hole is preserved verbatim
+    expect(out).toContain('{title}');
 
-    // … the flex-centering wrapper flattened …
-    expect(out).not.toContain('w-full');
-    expect(out).not.toContain('justify-center');
-    expect(out).not.toContain('items-center');
+    // … the flex-centering wrapper is PRESERVED (verify off never changes rendering) …
+    expect(out).toContain('justify-center');
+    expect(out).toContain('items-center');
+    expect(out).not.toContain('place-self-center');
 
-    // … the surviving child gained the centering intent …
-    expect(out).toContain('place-self-center');
-
-    // … and px-4 py-4 collapsed to p-4 (compress), bg-white kept.
-    expect(out).toContain('p-4');
-    expect(out).not.toContain('px-4');
-    expect(out).not.toContain('py-4');
+    // … and the inner div (a dynamic-child `{title}` element, never flattened nor compressed) keeps
+    //     its padding verbatim — nothing was dropped.
+    expect(out).toContain('px-4 py-4');
     expect(out).toContain('bg-white');
 
     // The output is still a valid, complete module (re-transforming it does not explode).
@@ -140,19 +155,15 @@ describe('createDomflax().transform — full modules survive surgery', () => {
 
     const { code: out } = createDomflax().transform(code, 'List.tsx');
 
-    // Both components and all dynamic JS survive verbatim.
     expect(out).toContain('import React from \'react\';');
     expect(out).toContain('export function List({ items })');
     expect(out).toContain('export function Raw({ html })');
 
-    // The `.map(...)` row is preserved verbatim — its `{expr}` body, `key=`, and inner `{it.label}`
-    // hole are untouched (the JSX inside the callback is opaque, so its classes are NOT rewritten).
     expect(out).toContain('{items.map((it) => (');
     expect(out).toContain('key={it.id}');
     expect(out).toContain('className="mx-2 my-2"');
     expect(out).toContain('{it.label}');
 
-    // dangerouslySetInnerHTML is an opacity barrier — preserved verbatim.
     expect(out).toContain('dangerouslySetInnerHTML={{ __html: html }}');
 
     // The static (non-dynamic-child) <li> compressed px-2 py-2 → p-2 …

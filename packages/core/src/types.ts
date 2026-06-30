@@ -507,6 +507,13 @@ export interface StyleResolver {
   emit(styles: StyleMap, ctx: EmitContext): EmitResult;         // reverse
   /** Reports every project selector referencing a class — compress safety (review-1 major). */
   selectorUsage(token: string): SelectorUsage;
+  /**
+   * OPTIONAL: produce a CSS stylesheet that defines the given class tokens, so a verifier can render
+   * a subtree with the provider's real styling applied. Tailwind generates the rules from its engine;
+   * the custom-CSS resolver returns its source stylesheets. Resolvers that cannot (the null/fake test
+   * resolvers) simply omit this — the verifier then falls back to inlining each element's computed style.
+   */
+  cssFor?(classes: readonly string[]): string;
 }
 
 /* ────────────────────────────────────────────────────────────────────────── *
@@ -716,12 +723,30 @@ export interface RewriteGroup {
   readonly ops: readonly RewriteOp[];
 }
 
+/**
+ * VERIFIER-GATED flatten policy (the "identical UI" safety guarantee).
+ *
+ *   • `'all'`             — commit every flatten the patterns produce (subject only to the existing
+ *                            emittability revert). The historical behaviour; the pattern auto-test
+ *                            harness runs in this mode so authored examples are validated in isolation.
+ *   • `'provably-safe'`   — commit ONLY flattens that provably change nothing renderable (the wrapper
+ *                            contributes no own box/formatting context and drops no style, and the
+ *                            rewrite makes no parent-context assumption). Every other flatten is
+ *                            reverted via the inverse journal. This is the default for the `domflax`
+ *                            orchestrator + CLI: domflax never changes rendering by default, and it is
+ *                            the ONLY user-facing behaviour — the transform is fully static and never
+ *                            launches a browser.
+ */
+export type FlattenGate = 'all' | 'provably-safe';
+
 export interface ApplyContext {
   readonly doc: IRDocument;
   readonly safetyCeiling: SafetyLevel;
   readonly normalizer: StyleNormalizer;
   readonly selectors: SelectorIndex;
   readonly resolver: StyleResolver;
+  /** Flatten safety policy. Defaults to `'all'` when omitted (historical behaviour). */
+  readonly gate?: FlattenGate;
 }
 
 export interface StructuralInverse {

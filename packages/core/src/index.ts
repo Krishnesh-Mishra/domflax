@@ -15,8 +15,11 @@ export * from './builders';
 // Runtime: the trusted applier.
 export * from './ops';
 
-// Runtime: pass manager + match/rewrite contexts.
+// Runtime: pass manager + match/rewrite contexts (re-exports ./pass-context's public surface).
 export * from './pass-manager';
+
+// Runtime: static flatten classifier (the safety core for the provably-safe gate).
+export * from './flatten-safety';
 
 // Runtime: the pure single-file pipeline.
 export * from './pipeline';

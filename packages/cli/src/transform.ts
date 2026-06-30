@@ -19,6 +19,7 @@ import {
 import type {
   ApplyContext,
   FileKind,
+  FlattenGate,
   IRDocument,
   Pass,
   PassCategory,
@@ -59,6 +60,10 @@ export interface FileResult {
 /** A configured transform — holds the resolver (and its cached engine) across files. */
 export interface Transform {
   readonly resolver: StyleResolver;
+  /**
+   * SYNC transform — fully static (gate `'provably-safe'`); never changes rendering and never launches
+   * a browser. Only provably layout-neutral flattens are applied.
+   */
   transformFile(code: string, id: string): FileResult;
 }
 
@@ -157,80 +162,83 @@ function passthroughResult(code: string): FileResult {
  * across every file. With `provider: 'tailwind'|'auto'`, if Tailwind cannot be resolved from the
  * project the resolver degrades to resolving nothing — transforms then pass through unchanged.
  */
+/** Parsed + authorized doc and the apply context, shared by the sync + async transform paths. */
+interface PreparedFile {
+  readonly doc: IRDocument;
+  readonly ctx: ApplyContext;
+  readonly passes: readonly Pass[];
+  readonly nodesIn: number;
+}
+
 export function createTransform(options: CliOptions): Transform {
   const projectRoot = options.projectRoot ?? process.cwd();
   const resolver = buildResolver(options.provider, options.css, projectRoot);
   const patterns = selectPatterns(options.passes);
+
+  /** PARSE (JSX → IR, classes onto `computed`) + AUTHORIZE + build the apply context for `gate`. */
+  function prepare(code: string, id: string, kind: FileKind, gate: FlattenGate): PreparedFile {
+    const parsed = createJsxFrontend().parse(code, {
+      id,
+      kind,
+      resolver,
+      normalizer,
+      config: {},
+      onDiagnostic: () => {},
+    });
+    const doc = parsed.doc;
+    const nodesIn = doc.nodes.size;
+    for (const node of doc.nodes.values()) node.meta.safetyFloor = 3;
+    const ctx: ApplyContext = {
+      doc,
+      safetyCeiling: options.safety as SafetyLevel,
+      normalizer,
+      // Real CSS-selector-safety index from the active resolver (custom-CSS reports combinator /
+      // structural-pseudo coupling; Tailwind has none → null index, behaviour unchanged).
+      selectors: buildSelectorIndex(doc, resolver),
+      resolver,
+      gate,
+    };
+    return { doc, ctx, passes: buildPasses(patterns), nodesIn };
+  }
+
+  /** REVERSE-EMIT + PRINT the optimized doc, then assemble the per-file result + stats. */
+  function finish(code: string, optimized: IRDocument, id: string, nodesIn: number): FileResult {
+    syncClassesFromComputed(optimized, resolver, normalizer);
+    const printed = createJsxBackend().print(
+      optimized,
+      { moduleId: id, ops: [], provenance: new Map() },
+      { normalizer, resolver, sink: createSyntheticSink(), eol: '\n', onDiagnostic: () => {} },
+    );
+    const out = printed.code;
+    const nodesOut = optimized.nodes.size;
+    const classesBefore = countClassTokens(code);
+    const classesAfter = countClassTokens(out);
+    return {
+      code: out,
+      changed: out !== code,
+      passthrough: false,
+      stats: {
+        nodesIn,
+        nodesOut,
+        nodesRemoved: Math.max(0, nodesIn - nodesOut),
+        classesBefore,
+        classesAfter,
+        classesSaved: Math.max(0, classesBefore - classesAfter),
+        bytesBefore: bytes(code),
+        bytesAfter: bytes(out),
+        bytesSaved: bytes(code) - bytes(out),
+      },
+    };
+  }
 
   return {
     resolver,
     transformFile(code: string, id: string): FileResult {
       const kind = jsxKindOf(id);
       if (kind === null) return passthroughResult(code);
-
-      // 1. PARSE — JSX → IR; the frontend resolves each element's static classes into `el.computed`.
-      const parsed = createJsxFrontend().parse(code, {
-        id,
-        kind,
-        resolver,
-        normalizer,
-        config: {},
-        onDiagnostic: () => {},
-      });
-      const doc = parsed.doc;
-      const nodesIn = doc.nodes.size;
-
-      // 2. AUTHORIZE — open every node's safety floor; the ceiling + pattern opacity guards gate.
-      for (const node of doc.nodes.values()) node.meta.safetyFloor = 3;
-
-      // 3. PASSES — drive the built-ins to a fixpoint via the core pass manager.
-      const ctx: ApplyContext = {
-        doc,
-        safetyCeiling: options.safety as SafetyLevel,
-        normalizer,
-        // Real CSS-selector-safety index from the active resolver (custom-CSS reports combinator /
-        // structural-pseudo coupling; Tailwind has none → null index, behaviour unchanged).
-        selectors: buildSelectorIndex(doc, resolver),
-        resolver,
-      };
-      const { doc: optimized } = runPasses(doc, buildPasses(patterns), ctx);
-
-      // 4. REVERSE-EMIT — fold optimized computed styles back into class tokens.
-      syncClassesFromComputed(optimized, resolver, normalizer);
-
-      // 5. PRINT — IR → JSX/TSX text.
-      const printed = createJsxBackend().print(
-        optimized,
-        { moduleId: id, ops: [], provenance: new Map() },
-        {
-          normalizer,
-          resolver,
-          sink: createSyntheticSink(),
-          eol: '\n',
-          onDiagnostic: () => {},
-        },
-      );
-
-      const out = printed.code;
-      const nodesOut = optimized.nodes.size;
-      const classesBefore = countClassTokens(code);
-      const classesAfter = countClassTokens(out);
-      return {
-        code: out,
-        changed: out !== code,
-        passthrough: false,
-        stats: {
-          nodesIn,
-          nodesOut,
-          nodesRemoved: Math.max(0, nodesIn - nodesOut),
-          classesBefore,
-          classesAfter,
-          classesSaved: Math.max(0, classesBefore - classesAfter),
-          bytesBefore: bytes(code),
-          bytesAfter: bytes(out),
-          bytesSaved: bytes(code) - bytes(out),
-        },
-      };
+      const { doc, ctx, passes, nodesIn } = prepare(code, id, kind, 'provably-safe');
+      const { doc: optimized } = runPasses(doc, passes, ctx);
+      return finish(code, optimized, id, nodesIn);
     },
   };
 }

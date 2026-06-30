@@ -59,13 +59,15 @@ describe('custom provider — T5 emittability (centering must not be silently dr
     expect(out).toContain('{y}');
   });
 
-  it('STILL flattens the Tailwind flex-center wrapper (place-self-center IS emittable)', () => {
+  it('verify off: the Tailwind flex-center wrapper is also PRESERVED (needs-verification, not committed)', () => {
     const code =
       '<div className="flex justify-center items-center"><div className="bg-red-200">x</div></div>';
     const { code: out } = createDomflax().transform(code, 'A.tsx');
 
-    expect(out).not.toContain('justify-center');
-    expect(out).toContain('place-self-center');
+    // With verify off, even a fully-emittable flex-center flatten is conservative (display:flex
+    // establishes a context the child's NEW parent may not provide) — so the wrapper stays.
+    expect(out).toContain('justify-center');
+    expect(out).not.toContain('place-self-center');
     expect(out).toContain('bg-red-200');
   });
 });
@@ -86,12 +88,13 @@ describe('custom provider — T4 selector safety (combinator dependents preserve
     expect(out).toContain('{a}');
   });
 
-  it('STILL flattens a Tailwind flex-center wrapper with no selector dependents', () => {
+  it('verify off: a Tailwind flex-center wrapper with no selector dependents is still PRESERVED', () => {
     const code = '<div className="flex justify-center items-center"><a className="bg-red-200">L</a></div>';
     const { code: out } = createDomflax().transform(code, 'D.tsx');
 
-    expect(out).not.toContain('justify-center');
-    expect(out).toContain('place-self-center');
+    // No combinator dependents, but display:flex makes this needs-verification ⇒ conservative by default.
+    expect(out).toContain('justify-center');
+    expect(out).not.toContain('place-self-center');
     expect(out).toContain('bg-red-200');
   });
 });

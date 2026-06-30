@@ -21,4 +21,10 @@ export default defineConfig({
   // Inline the private @domflax/* workspace packages into this bundle so `domflax` ships as a
   // single self-contained package (the @domflax/* packages are never published).
   noExternal: [/^@domflax\//],
+  // Keep playwright + its (partially unbundleable) chromium-bidi engine OUT of the bundle. The USER
+  // transform (`index`/`cli`) never references them — they are reached ONLY by the opt-in `verify`
+  // subpath (`@domflax/verify`), which requires them at runtime from `@domflax/verify`'s own dep.
+  // (playwright was previously auto-externalized as an optional peer; it is no longer a peer of the
+  // browser-free transform, so it must be externalized explicitly here.)
+  external: ['playwright', 'playwright-core', 'chromium-bidi'],
 });

@@ -325,6 +325,16 @@ export class CustomCSSResolver implements StyleResolver {
     return { classes, exact: remaining.size === 0, warnings: [] };
   }
 
+  /**
+   * Return a CSS stylesheet defining the given class tokens, so a verifier can render a subtree with
+   * the project's real styling applied. The source stylesheets ARE the definition, so we hand back
+   * their concatenation verbatim (every relevant rule — including combinator/structural selectors —
+   * is preserved). `classes` is accepted for interface parity but the full source is always returned.
+   */
+  public cssFor(_classes: readonly string[]): string {
+    return this.#files.map((f) => f.css).join('\n');
+  }
+
   public selectorUsage(token: string): SelectorUsage {
     const u = this.#usage.get(token);
     if (!u) {

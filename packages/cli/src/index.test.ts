@@ -47,8 +47,8 @@ describe('parseInvocation', () => {
 
 /* ───────────────────────── transform (dry-run flatten) ───────────────────────── */
 
-describe('createTransform — flatten', () => {
-  it('flattens a flex-centering wrapper, pushing place-self-center onto the surviving child', () => {
+describe('createTransform — conservative by default (verify off)', () => {
+  it('does NOT flatten a flex-centering wrapper, but still compresses the child', () => {
     const code =
       '<div className="w-full h-full flex justify-center items-center">' +
       '<div className="h-10 w-10 bg-red-200">Hello</div>' +
@@ -59,16 +59,17 @@ describe('createTransform — flatten', () => {
     const result = transformFile(code, 'App.tsx');
 
     expect(result.passthrough).toBe(false);
+    // The module still changed — the child's h-10 w-10 compressed to size-10.
     expect(result.changed).toBe(true);
-    expect(result.code).not.toContain('w-full');
-    expect(result.code).not.toContain('justify-center');
-    expect(result.code).toContain('place-self-center');
+    expect(result.code).toContain('size-10');
+    // … but the flex wrapper is PRESERVED (verify off never changes rendering).
+    expect(result.code).toContain('justify-center');
+    expect(result.code).not.toContain('place-self-center');
     expect(result.code).toContain('bg-red-200');
     expect(result.code).toContain('Hello');
-    expect(result.stats.nodesRemoved).toBeGreaterThan(0);
   });
 
-  it('round-trips a FULL module: keeps import/export/function/{title}, flattens, compresses', () => {
+  it('round-trips a FULL module: keeps import/export/function/{title}, compresses, no flatten', () => {
     const code = [
       "import React from 'react';",
       '',
@@ -94,13 +95,12 @@ describe('createTransform — flatten', () => {
     expect(result.code).toContain('return (');
     expect(result.code).toContain('{title}');
 
-    // … the wrapper flattened, child gained place-self-center, px-4 py-4 → p-4.
-    expect(result.code).not.toContain('justify-center');
-    expect(result.code).toContain('place-self-center');
-    expect(result.code).toContain('p-4');
-    expect(result.code).not.toContain('px-4');
+    // … the flex wrapper is PRESERVED (conservative); the dynamic-child `{title}` div keeps its
+    //     padding verbatim (not flattened, not compressed) — nothing dropped.
+    expect(result.code).toContain('justify-center');
+    expect(result.code).not.toContain('place-self-center');
+    expect(result.code).toContain('px-4 py-4');
     expect(result.code).toContain('bg-white');
-    expect(result.stats.nodesRemoved).toBeGreaterThan(0);
   });
 
   it('passes through non-jsx/tsx files unchanged', () => {

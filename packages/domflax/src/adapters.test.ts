@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest';
 
-import domflax, { createDomflax, vite, webpack, type DomflaxWebpackCompiler } from './index';
+import domflax, {
+  createDomflax,
+  vite,
+  webpack,
+  type DomflaxTransformResult,
+  type DomflaxWebpackCompiler,
+} from './index';
+
+/** Narrow vite's sync (verify-off) transform result for assertions. */
+function sync(r: DomflaxTransformResult | null | Promise<DomflaxTransformResult | null>): DomflaxTransformResult | null {
+  expect(r).not.toBeInstanceOf(Promise);
+  return r as DomflaxTransformResult | null;
+}
 
 /* ─────────────────────────────── vite() adapter ─────────────────────────────── */
 
@@ -12,18 +24,20 @@ describe('domflax.vite()', () => {
     expect(typeof plugin.transform).toBe('function');
   });
 
-  it('transform flattens a .tsx wrapper (real engine, returns {code,map})', () => {
+  it('transform compresses a .tsx module conservatively (verify off keeps the wrapper)', () => {
     const code =
       '<div className="w-full h-full flex justify-center items-center">' +
       '<div className="h-10 w-10 bg-red-200">Hello</div>' +
       '</div>';
 
-    const result = vite().transform(code, 'App.tsx');
+    const result = sync(vite().transform(code, 'App.tsx'));
 
     expect(result).not.toBeNull();
-    // Vite TransformResult: { code, map }.
-    expect(result?.code).toContain('place-self-center');
-    expect(result?.code).not.toContain('justify-center');
+    // Vite TransformResult: { code, map }. The flex wrapper is PRESERVED (no rendering change) …
+    expect(result?.code).toContain('justify-center');
+    expect(result?.code).not.toContain('place-self-center');
+    // … while the child still compresses (h-10 w-10 → size-10) so the module did change.
+    expect(result?.code).toContain('size-10');
     expect(result?.code).toContain('bg-red-200');
     expect(result?.map ?? null).toBeNull();
   });
@@ -34,9 +48,9 @@ describe('domflax.vite()', () => {
       '<div className="h-10 w-10 bg-red-200">Hello</div>' +
       '</div>';
 
-    const result = vite().transform(code, 'App.tsx?used');
+    const result = sync(vite().transform(code, 'App.tsx?used'));
     expect(result).not.toBeNull();
-    expect(result?.code).toContain('place-self-center');
+    expect(result?.code).toContain('size-10');
   });
 
   it('transform returns null for an unchanged .tsx module', () => {

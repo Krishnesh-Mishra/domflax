@@ -64,7 +64,7 @@ function printReport(totals: Totals): void {
  * Execute a fully-resolved {@link CliOptions}: discover inputs, enforce output safety, transform each
  * file, and either preview (dry-run), write to the mirrored output, or overwrite in place.
  */
-export function execute(options: CliOptions): RunResult {
+export async function execute(options: CliOptions): Promise<RunResult> {
   const { files, inputRoot, warnings } = discoverInputs(options.paths);
   for (const w of warnings) console.error(`domflax: ${w}`);
 
@@ -175,7 +175,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 
   try {
-    const result = execute(options);
+    const result = await execute(options);
     process.exitCode = result.exitCode;
   } catch (err) {
     console.error(`domflax: ${err instanceof Error ? err.message : String(err)}`);

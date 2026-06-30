@@ -14,33 +14,21 @@
  *   - `@domflax/backend-*`     — additional surgical codegen backends.
  */
 
-import {
-  buildSelectorIndex,
-  createPipeline,
-  createSyntheticSink,
-  runPasses,
-  syncClassesFromComputed,
-} from '@domflax/core';
+import { createPipeline } from '@domflax/core';
 import type {
-  ApplyContext,
   EncodedSourceMap,
-  FileKind,
-  IRDocument,
-  Pass,
-  PassCategory,
-  PassPhase,
   Pattern,
   Pipeline,
   SafetyLevel,
   StyleResolver,
 } from '@domflax/core';
 import { builtinPatterns } from '@domflax/patterns';
-import { createJsxBackend, createJsxFrontend } from '@domflax/frontend-jsx';
-import { normalizer } from '@domflax/pattern-kit';
 import { createTailwindResolver } from '@domflax/resolver-tailwind';
 import { createCssResolver } from '@domflax/resolver-css';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { jsxKindOf, runJsxPipeline } from './pipeline-run';
 
 // ── Re-export the public surface ──────────────────────────────────────────────────────────────
 export * from '@domflax/core';
@@ -116,101 +104,12 @@ export interface Domflax {
   readonly resolver: StyleResolver;
   readonly patterns: readonly Pattern[];
   /**
-   * Transform one file. For `.jsx`/`.tsx` this runs the full pipeline (parse → resolve → flatten →
-   * reverse-emit → print); every other (or unsupported) file is returned unchanged.
+   * Transform one file (SYNCHRONOUS, fully static, never launches a browser). For `.jsx`/`.tsx` this
+   * runs the full pipeline (parse → resolve → flatten[provably-safe only] → reverse-emit → print);
+   * every other (or unsupported) file is returned unchanged. Only provably layout-neutral flattens are
+   * applied — domflax never changes rendering.
    */
   transform(code: string, id: string): DomflaxTransformResult;
-}
-
-/** `.tsx`/`.jsx` ⇒ the matching {@link FileKind}; anything else ⇒ null (no JSX frontend). */
-function jsxKindOf(id: string): FileKind | null {
-  const clean = id.split('?', 1)[0] ?? id;
-  if (clean.endsWith('.tsx')) return 'tsx';
-  if (clean.endsWith('.jsx')) return 'jsx';
-  return null;
-}
-
-/** First registered source's EOL, defaulting to `\n`. */
-function eolOf(doc: IRDocument): '\n' | '\r\n' {
-  for (const src of doc.sources.values()) return src.eol;
-  return '\n';
-}
-
-/** Group the flat pattern list into one {@link Pass} per {@link PassPhase} (derived from category). */
-function buildPasses(patterns: readonly Pattern[]): Pass[] {
-  const byPhase = new Map<PassPhase, Pattern[]>();
-  for (const p of patterns) {
-    const phase = (p.category.split('/', 1)[0] ?? 'flatten') as PassPhase;
-    let bucket = byPhase.get(phase);
-    if (!bucket) {
-      bucket = [];
-      byPhase.set(phase, bucket);
-    }
-    bucket.push(p);
-  }
-  const passes: Pass[] = [];
-  for (const [phase, pats] of byPhase) {
-    passes.push({ phase, category: `${phase}/builtin` as PassCategory, patterns: pats });
-  }
-  return passes;
-}
-
-/** Run the full JSX/TSX pipeline and return the re-printed source. */
-function runJsxPipeline(
-  code: string,
-  id: string,
-  kind: FileKind,
-  resolver: StyleResolver,
-  patterns: readonly Pattern[],
-  safety: SafetyLevel,
-): string {
-  // 1. PARSE — the frontend lowers JSX → IR and resolves each element's static classes through the
-  //    injected resolver into `el.computed` (so the "resolve styles onto each element" step is done
-  //    here, via createTailwindResolver().resolve(classTokens)).
-  const parsed = createJsxFrontend().parse(code, {
-    id,
-    kind,
-    resolver,
-    normalizer,
-    config: {},
-    onDiagnostic: () => {},
-  });
-  const doc = parsed.doc;
-
-  // 2. AUTHORIZE — the JSX frontend defaults every node's safety floor to 0 (no optimization). The
-  //    orchestrator opens the floor to the max; the configured ceiling + each pattern's own opacity
-  //    predicates are the real gate.
-  for (const node of doc.nodes.values()) node.meta.safetyFloor = 3;
-
-  // 3. PASSES — drive the built-in patterns to a fixpoint via the core pass manager.
-  const ctx: ApplyContext = {
-    doc,
-    safetyCeiling: safety,
-    normalizer,
-    // Real CSS-selector-safety index from the active resolver: a wrapper a combinator/structural
-    // selector depends on is flagged so the flatten guards refuse to flatten it. Tailwind (no
-    // complexSelectors) degrades to the null index — behaviour unchanged.
-    selectors: buildSelectorIndex(doc, resolver),
-    resolver,
-  };
-  const { doc: optimized } = runPasses(doc, buildPasses(patterns), ctx);
-
-  // 4. REVERSE-EMIT — fold optimized computed styles back into class tokens for the backend.
-  syncClassesFromComputed(optimized, resolver, normalizer);
-
-  // 5. PRINT — IR → JSX/TSX text.
-  const printed = createJsxBackend().print(
-    optimized,
-    { moduleId: id, ops: [], provenance: new Map() },
-    {
-      normalizer,
-      resolver,
-      sink: createSyntheticSink(),
-      eol: eolOf(optimized),
-      onDiagnostic: () => {},
-    },
-  );
-  return printed.code;
 }
 
 /**
@@ -276,6 +175,7 @@ export function createDomflax(options: DomflaxOptions = {}): Domflax {
 export interface DomflaxVitePlugin {
   readonly name: string;
   readonly enforce: 'pre';
+  /** Vite's per-file source hook. Fully synchronous and browser-free. */
   transform(code: string, id: string): DomflaxTransformResult | null;
 }
 
