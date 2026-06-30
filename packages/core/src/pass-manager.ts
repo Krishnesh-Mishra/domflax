@@ -36,7 +36,9 @@ import type {
   SelectorIndex,
   StyleConflictPolicy,
   StyleMap,
+  StyleNormalizer,
   StyleResolver,
+  SyntheticSink,
   ElementLike,
   SelectorUsage,
   EmitContext,
@@ -107,6 +109,76 @@ export function createNullSelectorIndex(): SelectorIndex {
     reparentImpact(): ReadonlySet<IRNodeId> {
       return none;
     },
+  };
+}
+
+/** Resolvers that can enumerate the project's COMPLEX selectors (the custom-CSS resolver) expose this. */
+interface ComplexSelectorCapable {
+  complexSelectors(): readonly string[];
+}
+
+function hasComplexSelectors(r: StyleResolver): r is StyleResolver & ComplexSelectorCapable {
+  return typeof (r as Partial<ComplexSelectorCapable>).complexSelectors === 'function';
+}
+
+/**
+ * Build a real {@link SelectorIndex} from the active resolver.
+ *
+ * For a resolver that reports project COMPLEX selectors — anything with a combinator (`>`/`+`/`~`/
+ * descendant) or a structural pseudo, i.e. the custom-CSS resolver — every element whose static class
+ * participates in such a selector is flagged so the flatten/compress guards (`targetedByCombinator` /
+ * `affectsSelectorMatching`) fire and a wrapper a selector depends on is NOT flattened. An element is
+ * combinator-coupled when one of its classes is used as a descendant/child ancestor, as a sibling
+ * subject, or as a `:has()` argument; structural-coupled when used in `:nth-child(...)` etc.
+ *
+ * For a combinator-free resolver (Tailwind utilities — no `complexSelectors()`), this degrades to the
+ * null index so behaviour is unchanged.
+ */
+export function buildSelectorIndex(doc: IRDocument, resolver: StyleResolver): SelectorIndex {
+  if (!hasComplexSelectors(resolver) || resolver.complexSelectors().length === 0) {
+    return createNullSelectorIndex();
+  }
+
+  const combinator = new Set<IRNodeId>();
+  const structural = new Set<IRNodeId>();
+
+  for (const id of elementIds(doc)) {
+    const el = getElement(doc, id);
+    if (!el) continue;
+    for (const seg of el.classes.segments) {
+      if (seg.kind !== 'static') continue;
+      for (const t of seg.tokens) {
+        const u = resolver.selectorUsage(t.value);
+        // Combinator coupling: descendant/child ancestor, sibling subject, or `:has()` argument —
+        // reparenting/removing the element would change a combinator match-set.
+        if (u.asAncestor || u.asSibling || u.asHasArgument) combinator.add(id);
+        if (u.asStructural) structural.add(id);
+      }
+    }
+  }
+
+  // reparentImpact(id): non-empty when removing/unwrapping `id` would change a combinator/structural
+  // match-set — `id` itself is coupled (its own match), or it is the matched ancestor of a child
+  // (removing it reparents that child out of the relation). Self + element children is conservative
+  // and sufficient for the flatten guard.
+  const impact = new Map<IRNodeId, Set<IRNodeId>>();
+  for (const id of elementIds(doc)) {
+    const el = getElement(doc, id);
+    if (!el) continue;
+    if (!combinator.has(id) && !structural.has(id)) continue;
+    const set = new Set<IRNodeId>([id]);
+    for (const c of el.children) {
+      const cn = doc.nodes.get(c);
+      if (cn && cn.kind === 'element') set.add(c);
+    }
+    impact.set(id, set);
+  }
+
+  const empty: ReadonlySet<IRNodeId> = new Set();
+  return {
+    targetedByCombinator: (id: IRNodeId): boolean => combinator.has(id),
+    targetedByStructuralPseudo: (id: IRNodeId): boolean => structural.has(id),
+    reparentImpact: (id: IRNodeId): ReadonlySet<IRNodeId> => impact.get(id) ?? empty,
   };
 }
 
@@ -323,6 +395,69 @@ interface RunState {
   doc: IRDocument;
 }
 
+/* ───────────────────────── flatten residual-skip (never drop an unreproducible style) ───────────────────────── */
+
+/** A throwaway {@link SyntheticSink} for the emit exactness probe (registrations are discarded). */
+function probeSink(): SyntheticSink {
+  return {
+    register(s): string {
+      return s.className;
+    },
+    drain(): readonly never[] {
+      return [];
+    },
+  };
+}
+
+/** Nodes a group writes STYLE onto (the survivors a flatten transfers declarations to). */
+function styleWriteTargets(ops: readonly RewriteOp[]): IRNodeId[] {
+  const ids: IRNodeId[] = [];
+  for (const op of ops) {
+    if (op.op === 'mergeStyle' || op.op === 'setClassList') ids.push(op.target);
+    else if (op.op === 'foldInheritedStyles') ids.push(...op.into);
+  }
+  return ids;
+}
+
+/** True iff the resolver can EXACTLY reverse-emit `sm` (no residual). An empty map is trivially exact. */
+function emitIsExact(resolver: StyleResolver, normalizer: StyleNormalizer, sm: StyleMap): boolean {
+  if (sm.blocks.size === 0) return true;
+  try {
+    const ctx: EmitContext = { normalizer, sink: probeSink() };
+    const r = resolver.emit(sm, ctx);
+    return r.exact && r.residual == null;
+  } catch {
+    return true; // a throwing resolver must never block a flatten
+  }
+}
+
+/**
+ * T5 — flatten must never DROP a style it can't reproduce. After a flatten transfers declarations onto
+ * a surviving (rewritable) element, if the resolver can no longer EXACTLY reverse-emit that element's
+ * computed style — and it could before — the flatten would silently lose the residual declarations
+ * during reverse-emit, so the whole flatten is reverted (the wrapper is kept). Pre-existing residue
+ * (already non-exact before the flatten) is not blamed on the flatten and does not trigger a revert.
+ */
+function flattenWouldDropStyle(
+  before: IRDocument,
+  after: IRDocument,
+  ops: readonly RewriteOp[],
+  resolver: StyleResolver,
+  normalizer: StyleNormalizer,
+): boolean {
+  for (const id of styleWriteTargets(ops)) {
+    const newEl = getElement(after, id);
+    if (!newEl) continue; // target was itself removed — its style lives on the survivor we also check
+    // Opaque / dynamic class lists are kept verbatim by reverse-emit, so no style is dropped there.
+    if (newEl.classes.opaque || newEl.classes.hasDynamic) continue;
+    if (emitIsExact(resolver, normalizer, newEl.computed)) continue;
+    const oldEl = getElement(before, id);
+    const wasExact = !oldEl || emitIsExact(resolver, normalizer, oldEl.computed);
+    if (wasExact) return true; // the flatten introduced an unreproducible style → revert
+  }
+  return false;
+}
+
 /**
  * One sweep of a phase: evaluate every pattern against every live element, collect op drafts,
  * stamp origin, apply. Returns the number of ops successfully applied (0 ⇒ fixpoint for this
@@ -337,6 +472,7 @@ function runSweep(
   iteration: number,
   touched: Set<IRNodeId>,
   diagnostics: Diagnostic[],
+  flattenBarred: Set<IRNodeId>,
 ): number {
   let appliedOps = 0;
   const resolver = ctx.resolver;
@@ -345,6 +481,11 @@ function runSweep(
   for (const elId of elementIds(state.doc)) {
     const el = getElement(state.doc, elId);
     if (!el) continue; // removed earlier in this sweep
+    // T5: a wrapper whose specialized flatten had to revert (its compensating style is not
+    // reproducible by the resolver) is barred from ALL further flattening — otherwise a generic
+    // pattern (e.g. passthrough-wrapper) would strip it anyway and silently drop the very style the
+    // revert preserved. Compress/extract phases are unaffected.
+    if (phase === 'flatten' && flattenBarred.has(elId)) continue;
 
     for (const pattern of patterns) {
       if (pattern.safety > ctx.safetyCeiling) continue;
@@ -382,6 +523,27 @@ function runSweep(
       const outcome = applyOps(state.doc, ops, ctx);
       for (const d of outcome.result.diagnostics) diagnostics.push(d);
       if (outcome.result.appliedGroups > 0) {
+        // T5: a flatten must never drop a style the resolver can't re-emit — revert on residual.
+        if (
+          phase === 'flatten' &&
+          flattenWouldDropStyle(state.doc, outcome.doc, ops, resolver, ctx.normalizer)
+        ) {
+          diagnostics.push({
+            code: 'DF_VERIFY_REVERTED',
+            severity: 'warn',
+            message:
+              `flatten '${pattern.name}' reverted on node ${elId}: residual style is not ` +
+              `reproducible by resolver '${resolver.id}', so flattening would drop it`,
+            nodeId: elId,
+            pattern: pattern.name,
+            phase,
+            iteration,
+          });
+          // Discard the outcome (keep the wrapper) AND bar this node from any further flatten this
+          // run, so no other flatten pattern can strip the wrapper after the specialized one bailed.
+          flattenBarred.add(elId);
+          break;
+        }
         state.doc = outcome.doc;
         appliedOps += outcome.result.appliedGroups;
         for (const id of outcome.result.touched) touched.add(id);
@@ -422,6 +584,8 @@ export function runPasses(
   const factory = createRewriteFactory();
   const state: RunState = { doc };
   const results: PhaseRunResult[] = [];
+  // Nodes barred from flattening after an emittability revert (T5) — persists across sweeps/phases.
+  const flattenBarred = new Set<IRNodeId>();
 
   for (const phase of PHASE_ORDER) {
     const patterns = patternsForPhase(passes, phase);
@@ -457,6 +621,7 @@ export function runPasses(
         iterations,
         phaseTouched,
         diagnostics,
+        flattenBarred,
       );
 
       if (applied === 0) {

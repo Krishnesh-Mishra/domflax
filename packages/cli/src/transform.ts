@@ -11,7 +11,7 @@
  */
 
 import {
-  createNullSelectorIndex,
+  buildSelectorIndex,
   createSyntheticSink,
   runPasses,
   syncClassesFromComputed,
@@ -188,7 +188,9 @@ export function createTransform(options: CliOptions): Transform {
         doc,
         safetyCeiling: options.safety as SafetyLevel,
         normalizer,
-        selectors: createNullSelectorIndex(),
+        // Real CSS-selector-safety index from the active resolver (custom-CSS reports combinator /
+        // structural-pseudo coupling; Tailwind has none → null index, behaviour unchanged).
+        selectors: buildSelectorIndex(doc, resolver),
         resolver,
       };
       const { doc: optimized } = runPasses(doc, buildPasses(patterns), ctx);

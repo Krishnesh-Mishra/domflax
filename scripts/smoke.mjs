@@ -14,6 +14,8 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distEntry = path.join(here, '..', 'packages', 'domflax', 'dist', 'index.cjs');
@@ -119,6 +121,72 @@ const check = (label, cond) => {
   const provider = createDomflax().resolver.provider;
   console.log('  [provider]', provider);
   check('Tailwind engine loaded (provider is versioned, not bare fallback)', /^tailwindcss@\d/.test(provider));
+}
+
+// 4) T5 — custom-CSS provider: a flex-centering wrapper whose `place-self:center` is NOT reproducible
+//    by the project CSS must be PRESERVED (centering would otherwise be silently dropped). The
+//    Tailwind case above (#0/#1) already proves the emittable side still flattens.
+// 5) T4 — custom-CSS provider: wrappers a combinator/descendant selector depends on are PRESERVED.
+{
+  const tmp = mkdtempSync(path.join(tmpdir(), 'domflax-smoke-'));
+  try {
+    const centerCss = path.join(tmp, 'center.css');
+    writeFileSync(
+      centerCss,
+      '.center{display:flex;align-items:center;justify-content:center}\n.card{background:#fff}\n',
+    );
+    const codeT5 =
+      'export default function B(){return (<div className="center"><div className="card">{y}</div></div>);}';
+    const outT5 = createDomflax({ provider: 'custom', cssFiles: [centerCss] }).transform(codeT5, 'B.tsx').code;
+    console.log('  [T5 custom] out:', outT5);
+    check('T5: .center wrapper PRESERVED (un-emittable place-self-center not dropped)', outT5.includes('className="center"'));
+    check('T5: .card child preserved', outT5.includes('className="card"'));
+
+    const combinatorCss = path.join(tmp, 'combinator.css');
+    writeFileSync(
+      combinatorCss,
+      '.list > .item h3 { color: red }\n.item { display:flex; align-items:center; justify-content:center }\n',
+    );
+    const codeT4 = '<div className="list"><div className="item"><span className="x">{a}</span></div></div>';
+    const outT4 = createDomflax({ provider: 'custom', cssFiles: [combinatorCss] }).transform(codeT4, 'C.tsx').code;
+    console.log('  [T4 custom] out:', outT4);
+    check('T4: .list wrapper PRESERVED (combinator dependent)', outT4.includes('className="list"'));
+    check('T4: .item wrapper PRESERVED (combinator dependent)', outT4.includes('className="item"'));
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// 6) T7 — the default export is an object exposing { createDomflax, vite, webpack } and the build
+//    adapters return valid plugin shapes (works through the built dist / CJS `require`).
+{
+  const def = domflax.default ?? domflax;
+  console.log('  [T7 default keys]', Object.keys(def));
+  check('T7: default.createDomflax is a function', typeof def.createDomflax === 'function');
+  check('T7: default.vite is a function', typeof def.vite === 'function');
+  check('T7: default.webpack is a function', typeof def.webpack === 'function');
+  const vitePlugin = def.vite();
+  check('T7: vite() yields { name:"domflax", enforce:"pre", transform }', vitePlugin.name === 'domflax' && vitePlugin.enforce === 'pre' && typeof vitePlugin.transform === 'function');
+  const wpPlugin = def.webpack();
+  check('T7: webpack() yields { name:"domflax", apply }', wpPlugin.name === 'domflax' && typeof wpPlugin.apply === 'function');
+}
+
+// 7) T6 — webpack().apply must accept BOTH a real Compiler (`.options.module`) and Next's bare
+//    config (`.module`) without throwing, pushing a `.jsx/.tsx` loader rule in each shape.
+{
+  const compiler = { options: { module: { rules: [] } } };
+  let compilerOk = true;
+  try { domflax.webpack({}).apply(compiler); } catch { compilerOk = false; }
+  check('T6: apply(real Compiler {options:{module:{rules}}}) pushed a rule', compilerOk && compiler.options.module.rules.length === 1);
+
+  const bare = { module: { rules: [] } };
+  let bareOk = true;
+  try { domflax.webpack({}).apply(bare); } catch (err) { bareOk = false; console.error(err); }
+  check('T6: apply(Next bare config {module:{rules}}) did not throw and pushed a rule', bareOk && bare.module.rules.length === 1);
+  if (bareOk) {
+    const rule = bare.module.rules[0];
+    check('T6: bare-config rule is pre-enforced and matches .tsx', rule.enforce === 'pre' && rule.test.test('App.tsx'));
+  }
 }
 
 if (failures.length > 0) {

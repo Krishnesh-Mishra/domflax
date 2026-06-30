@@ -15,7 +15,7 @@
  */
 
 import {
-  createNullSelectorIndex,
+  buildSelectorIndex,
   createPipeline,
   createSyntheticSink,
   runPasses,
@@ -187,7 +187,10 @@ function runJsxPipeline(
     doc,
     safetyCeiling: safety,
     normalizer,
-    selectors: createNullSelectorIndex(),
+    // Real CSS-selector-safety index from the active resolver: a wrapper a combinator/structural
+    // selector depends on is flagged so the flatten guards refuse to flatten it. Tailwind (no
+    // complexSelectors) degrades to the null index — behaviour unchanged.
+    selectors: buildSelectorIndex(doc, resolver),
     resolver,
   };
   const { doc: optimized } = runPasses(doc, buildPasses(patterns), ctx);
@@ -319,14 +322,21 @@ interface DomflaxModuleRule {
   readonly use: readonly DomflaxRuleUse[];
 }
 
+/** Anything carrying a `module.rules` array — both a webpack `Compiler.options` and Next's bare config. */
+interface DomflaxWebpackModuleHost {
+  module?: { rules?: unknown[] };
+}
+
 /**
  * Minimal webpack-compiler shape. Declared locally so this adapter does NOT depend on `webpack`'s
- * types. domflax only needs to push a rule onto `compiler.options.module.rules`.
+ * types. domflax only needs to push a rule onto the host's `module.rules`.
+ *
+ * `apply` accepts BOTH shapes: a real webpack `Compiler` (rules live under `compiler.options.module`)
+ * AND the bare `config` object Next.js hands you from `webpack(config)` (rules live directly under
+ * `config.module`). It duck-types `compiler.options ?? compiler` to find the right host.
  */
-export interface DomflaxWebpackCompiler {
-  options: {
-    module?: { rules?: unknown[] };
-  };
+export interface DomflaxWebpackCompiler extends DomflaxWebpackModuleHost {
+  options?: DomflaxWebpackModuleHost;
 }
 
 /**
@@ -381,7 +391,10 @@ export function webpack(options: DomflaxOptions = {}): DomflaxWebpackPlugin {
   return {
     name: 'domflax',
     apply(compiler: DomflaxWebpackCompiler): void {
-      const mod = (compiler.options.module ??= {});
+      // Real webpack passes a `Compiler` (rules under `.options.module`); Next's `webpack(config)`
+      // passes the bare config (rules under `.module`). Duck-type to the right host.
+      const host: DomflaxWebpackModuleHost = compiler.options ?? compiler;
+      const mod = (host.module ??= {});
       const rules = (mod.rules ??= []);
       const rule: DomflaxModuleRule = {
         test: WEBPACK_JSX_TEST,
@@ -394,5 +407,18 @@ export function webpack(options: DomflaxOptions = {}): DomflaxWebpackPlugin {
   };
 }
 
-/** Default export: the programmatic factory. */
-export default createDomflax;
+/**
+ * The default-export namespace. Exposes the build adapters and the programmatic factory as an OBJECT
+ * so the documented `import domflax from 'domflax'; domflax.vite()` / `domflax.webpack()` works (and a
+ * CommonJS `const domflax = require('domflax'); domflax.vite()` too). The named exports
+ * (`createDomflax`, `vite`, `webpack`, …) remain available for direct import.
+ */
+export interface DomflaxDefault {
+  createDomflax(options?: DomflaxOptions): Domflax;
+  vite(options?: DomflaxOptions): DomflaxVitePlugin;
+  webpack(options?: DomflaxOptions): DomflaxWebpackPlugin;
+}
+
+/** Default export: an object exposing `vite`, `webpack`, and the programmatic `createDomflax`. */
+const domflax: DomflaxDefault = { createDomflax, vite, webpack };
+export default domflax;
