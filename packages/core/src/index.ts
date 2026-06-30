@@ -20,3 +20,6 @@ export * from './pass-manager';
 
 // Runtime: the pure single-file pipeline.
 export * from './pipeline';
+
+// Runtime: the shared reverse-emit step (computed → className).
+export * from './reverse-emit';

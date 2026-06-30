@@ -15,24 +15,14 @@
  */
 
 import {
-  BASE_CONDITION,
-  conditionKey,
   createNullSelectorIndex,
   createPipeline,
   createSyntheticSink,
-  elementIds,
-  emptyStyleMap,
-  getElement,
   runPasses,
+  syncClassesFromComputed,
 } from '@domflax/core';
 import type {
   ApplyContext,
-  ClassList,
-  ClassSegment,
-  ClassToken,
-  ConditionKey,
-  CssProperty,
-  EmitContext,
   EncodedSourceMap,
   FileKind,
   IRDocument,
@@ -42,10 +32,6 @@ import type {
   Pattern,
   Pipeline,
   SafetyLevel,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-  StyleNormalizer,
   StyleResolver,
 } from '@domflax/core';
 import { builtinPatterns } from '@domflax/patterns';
@@ -167,86 +153,6 @@ function buildPasses(patterns: readonly Pattern[]): Pass[] {
     passes.push({ phase, category: `${phase}/builtin` as PassCategory, patterns: pats });
   }
   return passes;
-}
-
-/** The BASE-condition declaration map of a StyleMap (empty when absent). */
-function baseDecls(sm: StyleMap): ReadonlyMap<CssProperty, StyleDecl> {
-  return sm.blocks.get(conditionKey(BASE_CONDITION))?.decls ?? new Map<CssProperty, StyleDecl>();
-}
-
-/** The BASE-condition declarations present in `current` but not equal-valued in `original`. */
-function residualStyleMap(current: StyleMap, original: StyleMap): StyleMap {
-  const orig = baseDecls(original);
-  const decls = new Map<CssProperty, StyleDecl>();
-  for (const [prop, decl] of baseDecls(current)) {
-    const had = orig.get(prop);
-    if (!had || had.value !== decl.value) decls.set(prop, decl);
-  }
-  if (decls.size === 0) return emptyStyleMap();
-  const block: StyleBlock = { condition: BASE_CONDITION, decls };
-  return { blocks: new Map<ConditionKey, StyleBlock>([[conditionKey(BASE_CONDITION), block]]) };
-}
-
-/** All static class tokens of a ClassList, in order. */
-function staticTokensOf(cl: ClassList): string[] {
-  const out: string[] = [];
-  for (const seg of cl.segments) {
-    if (seg.kind === 'static') for (const t of seg.tokens) out.push(t.value);
-  }
-  return out;
-}
-
-/** A rewritable static {@link ClassList} over `tokens`, preserving the previous list's spans. */
-function staticClassList(prev: ClassList, tokens: readonly string[]): ClassList {
-  const classTokens: ClassToken[] = tokens.map((value) => ({ value }));
-  const seg: ClassSegment = { kind: 'static', tokens: classTokens };
-  return {
-    form: 'string-literal',
-    segments: [seg],
-    valueSpan: prev.valueSpan,
-    attrSpan: prev.attrSpan,
-    hasDynamic: false,
-    opaque: false,
-    rewritable: true,
-  };
-}
-
-/**
- * Reverse-emit step (computed → className). The backend re-prints `className` from each element's
- * {@link ClassList}, but the pass manager records optimized styles on `computed`. For every TOUCHED,
- * rewritable element this folds the *new* computed declarations (those not already produced by its
- * existing class tokens) back into class tokens via {@link StyleResolver.emit}, appending them while
- * keeping the element's original (still-meaningful) tokens.
- */
-function syncClassesFromComputed(
-  doc: IRDocument,
-  resolver: StyleResolver,
-  norm: StyleNormalizer,
-): void {
-  const sink = createSyntheticSink();
-  for (const id of elementIds(doc)) {
-    const el = getElement(doc, id);
-    if (!el || !el.meta.touched) continue;
-    if (el.classes.opaque || el.classes.hasDynamic) continue;
-
-    const tokens = staticTokensOf(el.classes);
-    const original = norm.normalizeStyleMap(
-      resolver.resolve({
-        classes: tokens,
-        element: { tagName: el.tag, namespace: el.namespace === 'svg' ? 'svg' : 'html' },
-      }).styles,
-    );
-    const residual = residualStyleMap(el.computed, original);
-    if (baseDecls(residual).size === 0) continue;
-
-    const ctx: EmitContext = { normalizer: norm, sink };
-    const emitted = resolver.emit(residual, ctx).classes;
-    if (emitted.length === 0) continue;
-
-    const next = [...tokens];
-    for (const c of emitted) if (!next.includes(c)) next.push(c);
-    el.classes = staticClassList(el.classes, next);
-  }
 }
 
 /** Run the full JSX/TSX pipeline and return the re-printed source. */

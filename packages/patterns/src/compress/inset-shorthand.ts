@@ -157,12 +157,11 @@ export const insetShorthand = pattern({
   },
   examples: [
     {
-      // The four equal inset longhands collapse to an `inset` shorthand at the IR level (verified by
-      // the invariant suite). The JSX round-trip is output-identity: the Tailwind resolver's
-      // reverse-emit index is keyed on longhands and is append-only, so a raw `inset` shorthand key
-      // maps to no utility.
+      // The four equal inset longhands collapse to an `inset` shorthand at the IR level; the
+      // minimizing reverse-emit expands it back to top/right/bottom/left and picks the single utility
+      // covering all four (`inset-0`), replacing the four physical-side tokens. `bg-red-200` survives.
       before: '<div className="top-0 right-0 bottom-0 left-0 bg-red-200">box</div>',
-      after: '<div className="top-0 right-0 bottom-0 left-0 bg-red-200">box</div>',
+      after: '<div className="bg-red-200 inset-0">box</div>',
     },
     {
       // No matching inset pair (all four distinct) → nothing collapses.

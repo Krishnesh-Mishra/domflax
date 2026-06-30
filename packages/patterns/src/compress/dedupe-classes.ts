@@ -127,12 +127,11 @@ export const dedupeClasses = pattern({
   },
   examples: [
     {
-      // `text-sm` is fully overridden by `text-lg` (both set font-size) and is dropped at the IR
-      // level. The JSX round-trip is output-identity here because the Tailwind resolver reports
-      // every class as non-droppable (it has no project selector graph, so it must assume any class
-      // could be referenced) — so the selector-membership guard keeps both tokens in this pipeline.
+      // `text-sm` is fully overridden by `text-lg` (both set font-size + line-height). The resolver
+      // records that shadowing in provenance and reports the Tailwind utility as droppable, so the
+      // pattern drops `text-sm`; the reverse-emit then re-derives the minimal set (`text-lg`).
       before: '<p className="text-sm text-lg">Hi</p>',
-      after: '<p className="text-sm text-lg">Hi</p>',
+      after: '<p className="text-lg">Hi</p>',
     },
     {
       // Both tokens win a distinct property (no full override) → nothing to dedupe.

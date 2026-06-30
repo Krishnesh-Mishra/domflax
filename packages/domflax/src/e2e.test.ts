@@ -18,9 +18,11 @@ describe('createDomflax().transform — end to end', () => {
     expect(out).not.toContain('justify-center');
     expect(out).not.toContain('items-center');
 
-    // … the child survived, kept its own classes …
-    expect(out).toContain('h-10');
-    expect(out).toContain('w-10');
+    // … the child survived, keeping its own styles — and its equal width/height (`h-10 w-10`)
+    //     was compressed to the shorter `size-10` by the minimizing reverse-emit.
+    expect(out).toContain('size-10');
+    expect(out).not.toContain('h-10');
+    expect(out).not.toContain('w-10');
     expect(out).toContain('bg-red-200');
 
     // … gained the centering intent as a class …
@@ -28,6 +30,16 @@ describe('createDomflax().transform — end to end', () => {
 
     // … and kept its text content.
     expect(out).toContain('Hello');
+  });
+
+  it('compresses px-4 py-4 to the single p-4 utility (reverse-emit minimization)', () => {
+    const code = '<div className="px-4 py-4 bg-white">x</div>';
+    const { code: out } = createDomflax().transform(code, 'App.tsx');
+
+    expect(out).toContain('p-4');
+    expect(out).not.toContain('px-4');
+    expect(out).not.toContain('py-4');
+    expect(out).toContain('bg-white');
   });
 
   it('does NOT flatten a centering wrapper that carries an onClick (opacity barrier)', () => {

@@ -183,12 +183,11 @@ export const paddingShorthand = pattern({
   },
   examples: [
     {
-      // The four equal padding longhands collapse to a `padding` shorthand at the IR level (verified
-      // by the invariant suite). The JSX round-trip is output-identity: the Tailwind resolver's
-      // reverse-emit index is keyed on longhands and is append-only, so a raw `padding` shorthand
-      // key maps to no utility.
+      // The four equal padding longhands collapse to a `padding` shorthand at the IR level, and the
+      // minimizing reverse-emit picks the single shortest utility (`p-4`) that reproduces it,
+      // replacing the four `p{t,r,b,l}-4` tokens. `bg-red-200` is preserved (its order is stable).
       before: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
-      after: '<div className="pt-4 pr-4 pb-4 pl-4 bg-red-200">box</div>',
+      after: '<div className="bg-red-200 p-4">box</div>',
     },
     {
       // Asymmetric padding (top != bottom) cannot fold into a shorthand.

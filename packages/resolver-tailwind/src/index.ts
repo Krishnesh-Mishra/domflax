@@ -64,6 +64,7 @@ import type {
   StyleMap,
   StyleOrigin,
   StyleResolver,
+  SyntheticClass,
 } from '@domflax/core';
 import { BASE_CONDITION, conditionKey, emptyStyleMap } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
@@ -367,6 +368,24 @@ function buildStyleMap(
   return normalizer.normalizeStyleMap({ blocks });
 }
 
+/**
+ * The shadow chain a newly-winning declaration inherits when it overrides `prev` on the same
+ * property: everything `prev` already shadowed, plus `prev`'s own origin (now shadowed too). Deduped
+ * by class name and restricted to class origins (the only kind `dedupe-classes` acts on).
+ */
+function shadowedBy(prev: StyleDecl): readonly StyleOrigin[] | undefined {
+  const out: StyleOrigin[] = [];
+  const seen = new Set<string>();
+  const add = (o: StyleOrigin | undefined): void => {
+    if (!o || o.kind !== 'class' || seen.has(o.className)) return;
+    seen.add(o.className);
+    out.push(o);
+  };
+  for (const o of prev.shadowed ?? []) add(o);
+  add(prev.origin);
+  return out.length > 0 ? out : undefined;
+}
+
 /* ───────────────────────── conservative selector usage ───────────────────────── */
 
 /**
@@ -381,6 +400,20 @@ const OPAQUE_USAGE: SelectorUsage = {
   asHasArgument: true,
   asStructural: true,
   droppable: false,
+};
+
+/**
+ * A plain-subject {@link SelectorUsage}: the class is a resolver-owned, base-only utility whose
+ * whole effect is reproducible from `computed`, so it is safe to drop/replace during reverse-emit.
+ */
+const DROPPABLE_USAGE: SelectorUsage = {
+  asSubject: true,
+  asAncestor: false,
+  asCompound: false,
+  asSibling: false,
+  asHasArgument: false,
+  asStructural: false,
+  droppable: true,
 };
 
 /* ───────────────────────── fingerprint ───────────────────────── */
@@ -476,7 +509,13 @@ class TailwindResolver implements StyleResolver {
         }
         for (const [prop, value, important] of block.decls) {
           for (const decl of normalizer.normalizeDeclaration(prop, value, important)) {
-            bucket.decls.set(decl.property, { ...decl, origin });
+            // Record provenance: a LATER token on the same property shadows the earlier one. The
+            // overridden origin (plus anything it already shadowed) is carried in `shadowed`, which
+            // is exactly what the `dedupe-classes` pattern reads to find fully-overridden tokens.
+            // This only enriches decl metadata — the resolved VALUES are unchanged.
+            const prev = bucket.decls.get(decl.property);
+            const shadowed = prev ? shadowedBy(prev) : undefined;
+            bucket.decls.set(decl.property, shadowed ? { ...decl, origin, shadowed } : { ...decl, origin });
             contributed = true;
           }
         }
@@ -542,39 +581,150 @@ class TailwindResolver implements StyleResolver {
 
   emit(styles: StyleMap, ctx: EmitContext): EmitResult {
     const norm = ctx.normalizer ?? normalizer;
-    const base = norm.normalizeStyleMap(styles).blocks.get(conditionKey(BASE_CONDITION));
+    const normalized = norm.normalizeStyleMap(styles);
+    const base = normalized.blocks.get(conditionKey(BASE_CONDITION));
     if (!base || base.decls.size === 0) return { classes: [], exact: true, warnings: [] };
 
     // Only the BASE block is reverse-synthesized (see module LIMITATION). Any non-base condition
     // present in the target means we cannot be exact.
-    const hasNonBase = norm.normalizeStyleMap(styles).blocks.size > 1;
+    const hasNonBase = normalized.blocks.size > 1;
 
-    const remaining = new Map<CssProperty, string>();
-    for (const [prop, decl] of base.decls) remaining.set(prop, String(decl.value));
+    // The target longhand map. The IR's compress passes hand us SHORTHAND properties (`padding`,
+    // `margin`, `inset`, `inset-block`, `inset-inline`, `size`); we expand them to the same longhand
+    // basis the reverse index is keyed on, so a single shorthand utility (`p-4`, `size-4`, `inset-0`)
+    // can cover them.
+    const target = new Map<CssProperty, string>();
+    for (const [prop, decl] of base.decls) {
+      for (const [lp, lv] of expandForEmit(norm, String(prop), String(decl.value), decl.important)) {
+        target.set(lp, lv);
+      }
+    }
 
-    const classes: string[] = [];
-    for (const [token, declMap] of this.#buildReverseIndex()) {
-      if (declMap.size === 0 || declMap.size > remaining.size) continue;
-      let matches = true;
+    // Keep only utilities every one of whose declarations matches the target (an exact-fit subset);
+    // emitting a utility that sets an unwanted property/value would change the computed style.
+    const candidates: Array<readonly [string, ReadonlyMap<CssProperty, string>]> = [];
+    for (const entry of this.#buildReverseIndex()) {
+      const [, declMap] = entry;
+      if (declMap.size === 0 || declMap.size > target.size) continue;
+      let fits = true;
       for (const [prop, value] of declMap) {
-        if (remaining.get(prop) !== value) {
-          matches = false;
+        if (target.get(prop) !== value) {
+          fits = false;
           break;
         }
       }
-      if (!matches) continue;
-      classes.push(token);
-      for (const prop of declMap.keys()) remaining.delete(prop);
-      if (remaining.size === 0) break;
+      if (fits) candidates.push(entry);
     }
 
-    return { classes, exact: remaining.size === 0 && !hasNonBase, warnings: [] };
+    // Greedy set-cover: repeatedly take the candidate covering the MOST still-needed declarations,
+    // so a shorthand (`p-4`, 4 decls) beats `px-4`+`py-4`. Ties break toward the tighter decl-set
+    // then lexicographically, for deterministic output.
+    const remaining = new Map(target);
+    const classes: string[] = [];
+    while (remaining.size > 0) {
+      let best: readonly [string, ReadonlyMap<CssProperty, string>] | null = null;
+      let bestCover = 0;
+      for (const entry of candidates) {
+        const [token, declMap] = entry;
+        let cover = 0;
+        for (const prop of declMap.keys()) if (remaining.has(prop)) cover += 1;
+        if (cover === 0) continue;
+        const better =
+          best === null ||
+          cover > bestCover ||
+          (cover === bestCover && declMap.size < best[1].size) ||
+          (cover === bestCover && declMap.size === best[1].size && token < best[0]);
+        if (better) {
+          best = entry;
+          bestCover = cover;
+        }
+      }
+      if (!best) break; // nothing covers any still-needed declaration → residual
+      classes.push(best[0]);
+      for (const prop of best[1].keys()) remaining.delete(prop);
+    }
+
+    const exact = remaining.size === 0 && !hasNonBase;
+    if (remaining.size === 0) return { classes, exact, warnings: [] };
+
+    // Surface what no utility could cover as a residual synthetic (never thrown, never invented).
+    const residual = synthesizeResidual(remaining, ctx);
+    return residual
+      ? { classes, residual, exact, warnings: [] }
+      : { classes, exact, warnings: [] };
   }
 
-  selectorUsage(_token: string): SelectorUsage {
-    // Conservative default: no project selector graph yet, so treat every class as load-bearing.
-    return OPAQUE_USAGE;
+  selectorUsage(token: string): SelectorUsage {
+    // No project selector graph yet, so we cannot know how a CUSTOM (non-Tailwind) class is
+    // referenced — treat it as load-bearing (preserved verbatim). A resolver-OWNED utility, by
+    // contrast, is safe to drop/replace iff its whole effect is reproducible from `computed`: it
+    // must be a plain (non-opaque) utility contributing ONLY base-condition declarations. Opaque
+    // (combinator/at-rule) and variant-bound utilities are kept, because `emit` cannot rebuild them.
+    const ex = this.#extract(token);
+    if (!ex.produced || ex.opaque) return OPAQUE_USAGE;
+    const baseOnly =
+      ex.blocks.length > 0 &&
+      ex.blocks.every((b) => conditionKey(b.condition) === conditionKey(BASE_CONDITION));
+    if (!baseOnly) return OPAQUE_USAGE;
+    return DROPPABLE_USAGE;
   }
+}
+
+/* ───────────────────────── emit-side shorthand expansion ───────────────────────── */
+
+/**
+ * Expand a single computed declaration into the canonical LONGHAND `[property, value]` pairs the
+ * reverse index is keyed on. The shared normalizer already expands the physical box shorthands
+ * (`padding`/`margin`/`inset`/`border-*`); we additionally expand the few logical shorthands the
+ * compress passes synthesize that the normalizer leaves intact (`size`, `inset-block`,
+ * `inset-inline`). Values are re-canonicalized via the normalizer so they match the index exactly.
+ */
+function expandForEmit(
+  norm: { normalizeDeclaration: typeof normalizer.normalizeDeclaration },
+  prop: string,
+  value: string,
+  important: boolean,
+): Array<readonly [CssProperty, string]> {
+  const pairsFor = (p: string, v: string): Array<readonly [CssProperty, string]> =>
+    norm.normalizeDeclaration(p, v, important).map((d) => [d.property, String(d.value)] as const);
+
+  if (prop === 'size') {
+    return [...pairsFor('width', value), ...pairsFor('height', value)];
+  }
+  if (prop === 'inset-block' || prop === 'inset-inline') {
+    const parts = value.split(/\s+/).filter((s) => s.length > 0);
+    const a = parts[0] ?? value;
+    const b = parts[1] ?? a;
+    const sides = prop === 'inset-block' ? (['top', 'bottom'] as const) : (['left', 'right'] as const);
+    return [...pairsFor(sides[0], a), ...pairsFor(sides[1], b)];
+  }
+  return pairsFor(prop, value);
+}
+
+/** Build a residual {@link SyntheticClass} for declarations no utility covered; `null` on failure. */
+function synthesizeResidual(
+  remaining: ReadonlyMap<CssProperty, string>,
+  ctx: EmitContext,
+): SyntheticClass | undefined {
+  if (remaining.size === 0) return undefined;
+  const norm = ctx.normalizer ?? normalizer;
+  const decls = new Map<CssProperty, StyleDecl>();
+  for (const [prop, value] of remaining) {
+    for (const decl of norm.normalizeDeclaration(String(prop), value, false)) {
+      decls.set(decl.property, decl);
+    }
+  }
+  const block: StyleBlock = { condition: BASE_CONDITION, decls };
+  const styleMap: StyleMap = { blocks: new Map([[conditionKey(BASE_CONDITION), block]]) };
+  const css = [...remaining].map(([p, v]) => `${p}:${v}`).join(';');
+  const className = `df-${fnv1a(css)}`;
+  const synthetic: SyntheticClass = { className, decls: styleMap, css: `.${className}{${css}}` };
+  try {
+    ctx.sink.register(synthetic);
+  } catch {
+    /* a sink that rejects registration must not break emit */
+  }
+  return synthetic;
 }
 
 /** Recover a class name from a simple `.escaped-class` selector, or `null` if it isn't simple. */

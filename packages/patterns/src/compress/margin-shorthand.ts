@@ -163,12 +163,11 @@ export const marginShorthand = pattern({
   },
   examples: [
     {
-      // The four margin longhands collapse to a `margin` shorthand at the IR level (verified by the
-      // invariant suite). The JSX round-trip is output-identity: the Tailwind resolver's reverse-emit
-      // index is keyed on longhands and is append-only, so a raw `margin` shorthand key maps to no
-      // utility.
+      // The four equal margin longhands collapse to a `margin` shorthand at the IR level, and the
+      // minimizing reverse-emit picks the single shortest utility (`m-2`) reproducing it, replacing
+      // the four `m{t,r,b,l}-2` tokens. `bg-red-200` is preserved.
       before: '<div className="mt-2 mr-2 mb-2 ml-2 bg-red-200">box</div>',
-      after: '<div className="mt-2 mr-2 mb-2 ml-2 bg-red-200">box</div>',
+      after: '<div className="bg-red-200 m-2">box</div>',
     },
     {
       // Only two margin sides set → the four-longhand `margin` collapse does not apply.

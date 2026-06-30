@@ -52,6 +52,19 @@ const check = (label, cond) => {
   check('child kept bg-red-200', out.includes('bg-red-200'));
   check('REVERSE-EMIT produced place-self-center (the regression)', out.includes('place-self-center'));
   check('kept text content', out.includes('Hello'));
+  // The flattened child's equal width/height (`h-10 w-10`) compresses to the shorter `size-10`.
+  check('COMPRESS shortened h-10 w-10 → size-10 in built dist', out.includes('size-10') && !out.includes('h-10') && !out.includes('w-10'));
+}
+
+// 1b) COMPRESS actually shortens output end-to-end in the built dist: px-4 py-4 → p-4.
+{
+  const code = '<div className="px-4 py-4 bg-white">x</div>';
+  const { code: out } = createDomflax().transform(code, 'App.tsx');
+  console.log('  [compress px/py] out:', out);
+  check('px-4 py-4 collapsed to p-4', out.includes('p-4'));
+  check('no leftover px-4', !out.includes('px-4'));
+  check('no leftover py-4', !out.includes('py-4'));
+  check('preserved bg-white', out.includes('bg-white'));
 }
 
 // 2) An onClick wrapper is an opacity barrier — it must NOT flatten.

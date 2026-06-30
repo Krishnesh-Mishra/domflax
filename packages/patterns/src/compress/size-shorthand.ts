@@ -130,11 +130,11 @@ export const sizeShorthand = pattern({
   },
   examples: [
     {
-      // Equal width/height collapse to a `size` decl at the IR level (verified by the invariant
-      // suite). The JSX round-trip is output-identity: the Tailwind resolver's reverse-emit index
-      // is keyed on longhands and is append-only, so a raw `size` shorthand key maps to no utility.
+      // Equal width/height collapse to a `size` decl at the IR level; the minimizing reverse-emit
+      // expands `size` back to width+height, finds the single utility covering both (`size-10`), and
+      // replaces the `h-10`+`w-10` pair with it. `bg-red-200` is preserved.
       before: '<div className="h-10 w-10 bg-red-200">box</div>',
-      after: '<div className="h-10 w-10 bg-red-200">box</div>',
+      after: '<div className="bg-red-200 size-10">box</div>',
     },
     {
       // Width and height differ → no equal-axis collapse.

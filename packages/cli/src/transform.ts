@@ -11,22 +11,13 @@
  */
 
 import {
-  BASE_CONDITION,
-  conditionKey,
   createNullSelectorIndex,
   createSyntheticSink,
-  elementIds,
-  emptyStyleMap,
-  getElement,
   runPasses,
+  syncClassesFromComputed,
 } from '@domflax/core';
 import type {
   ApplyContext,
-  ClassList,
-  ClassSegment,
-  ClassToken,
-  ConditionKey,
-  CssProperty,
   FileKind,
   IRDocument,
   Pass,
@@ -34,10 +25,6 @@ import type {
   PassPhase,
   Pattern,
   SafetyLevel,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
-  StyleNormalizer,
   StyleResolver,
 } from '@domflax/core';
 import { createJsxBackend, createJsxFrontend } from '@domflax/frontend-jsx';
@@ -116,73 +103,6 @@ function selectPatterns(names: readonly string[] | null): readonly Pattern[] {
   if (names === null) return builtinPatterns;
   const set = new Set(names);
   return builtinPatterns.filter((p) => set.has(p.name));
-}
-
-/* ───────────────────────── reverse-emit helpers (mirrors domflax) ───────────────────────── */
-
-function baseDecls(sm: StyleMap): ReadonlyMap<CssProperty, StyleDecl> {
-  return sm.blocks.get(conditionKey(BASE_CONDITION))?.decls ?? new Map<CssProperty, StyleDecl>();
-}
-
-function residualStyleMap(current: StyleMap, original: StyleMap): StyleMap {
-  const orig = baseDecls(original);
-  const decls = new Map<CssProperty, StyleDecl>();
-  for (const [prop, decl] of baseDecls(current)) {
-    const had = orig.get(prop);
-    if (!had || had.value !== decl.value) decls.set(prop, decl);
-  }
-  if (decls.size === 0) return emptyStyleMap();
-  const block: StyleBlock = { condition: BASE_CONDITION, decls };
-  return { blocks: new Map<ConditionKey, StyleBlock>([[conditionKey(BASE_CONDITION), block]]) };
-}
-
-function staticTokensOf(cl: ClassList): string[] {
-  const out: string[] = [];
-  for (const seg of cl.segments) {
-    if (seg.kind === 'static') for (const t of seg.tokens) out.push(t.value);
-  }
-  return out;
-}
-
-function staticClassList(prev: ClassList, tokens: readonly string[]): ClassList {
-  const classTokens: ClassToken[] = tokens.map((value) => ({ value }));
-  const seg: ClassSegment = { kind: 'static', tokens: classTokens };
-  return {
-    form: 'string-literal',
-    segments: [seg],
-    valueSpan: prev.valueSpan,
-    attrSpan: prev.attrSpan,
-    hasDynamic: false,
-    opaque: false,
-    rewritable: true,
-  };
-}
-
-/** Fold optimized computed styles on every TOUCHED, rewritable element back into class tokens. */
-function syncClassesFromComputed(doc: IRDocument, resolver: StyleResolver, norm: StyleNormalizer): void {
-  const sink = createSyntheticSink();
-  for (const id of elementIds(doc)) {
-    const el = getElement(doc, id);
-    if (!el || !el.meta.touched) continue;
-    if (el.classes.opaque || el.classes.hasDynamic) continue;
-
-    const tokens = staticTokensOf(el.classes);
-    const original = norm.normalizeStyleMap(
-      resolver.resolve({
-        classes: tokens,
-        element: { tagName: el.tag, namespace: el.namespace === 'svg' ? 'svg' : 'html' },
-      }).styles,
-    );
-    const residual = residualStyleMap(el.computed, original);
-    if (baseDecls(residual).size === 0) continue;
-
-    const emitted = resolver.emit(residual, { normalizer: norm, sink }).classes;
-    if (emitted.length === 0) continue;
-
-    const next = [...tokens];
-    for (const c of emitted) if (!next.includes(c)) next.push(c);
-    el.classes = staticClassList(el.classes, next);
-  }
 }
 
 /* ───────────────────────── file kind + token counting ───────────────────────── */
