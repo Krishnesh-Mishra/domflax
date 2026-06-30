@@ -1,6 +1,6 @@
 {
   "name": "domflax",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Compile-time DOM flattener and semantic CSS compressor — fewer DOM nodes, smaller class sets, identical rendered UI.",
   "keywords": [
     "dom",
@@ -50,12 +50,13 @@
   },
   "files": [
     "dist",
+    "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "node ../../scripts/sync-package-docs.mjs && npm run build"
   },
   "peerDependencies": {
     "playwright": "*",
