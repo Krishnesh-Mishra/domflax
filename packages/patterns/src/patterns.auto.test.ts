@@ -36,7 +36,9 @@ import { normalizer } from '@domflax/pattern-kit';
 import { runAutoTests, runInvariants } from '@domflax/pattern-kit/testing';
 import { createTailwindResolver } from '@domflax/resolver-tailwind';
 
-import { builtinPatterns } from './index';
+import { describe, expect, it } from 'vitest';
+
+import { builtinPatterns } from './_registry.generated';
 
 /* ───────────────────────── orchestration glue (mirrors domflax, sans the cycle) ───────────────────────── */
 
@@ -134,3 +136,22 @@ const patterns = builtinPatterns as readonly AuthoredPattern[];
 
 runInvariants(patterns);
 runAutoTests(patterns, { transform });
+
+/* ───────────────────────── auto-discovered registry shape ───────────────────────── */
+
+describe('builtinPatterns registry (auto-generated)', () => {
+  it('contains all 10 patterns with unique names', () => {
+    expect(builtinPatterns).toHaveLength(10);
+    const names = builtinPatterns.map((p) => p.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('is ordered flatten-before-compress (sorted by category phase)', () => {
+    const phases = builtinPatterns.map((p) => p.category.split('/', 1)[0]);
+    const lastFlatten = phases.lastIndexOf('flatten');
+    const firstCompress = phases.indexOf('compress');
+    // Every flatten pattern must precede every compress pattern.
+    expect(lastFlatten).toBeLessThan(firstCompress);
+    expect(phases.every((ph) => ph === 'flatten' || ph === 'compress')).toBe(true);
+  });
+});
