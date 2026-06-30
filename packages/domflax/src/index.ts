@@ -2,18 +2,16 @@
  * domflax — public meta package.
  *
  * Re-exports the entire `@domflax/core` public API (types + reference runtime) and the built-in
- * `@domflax/patterns` library, then layers thin, unplugin-style build adapters on top
+ * `@domflax/patterns` library, then layers thin, framework-agnostic build adapters on top
  * (`vite()` / `webpack()`) plus a programmatic `createDomflax()` factory.
  *
- * Status: v0 (early scaffold). Matching the published 0.0.1 behaviour, every adapter wires a core
- * {@link Pipeline} configured with a passthrough resolver and **returns source unchanged** — an
- * honest passthrough while the parse → resolve → flatten → compress → emit pipeline is built out.
+ * Each adapter runs the SAME single-file engine as {@link createDomflax} (JSX/TSX frontend + lazy
+ * Tailwind/CSS resolver → core pass manager → reverse-emit → JSX backend). The adapters are
+ * structurally typed against their bundlers — they never hard-depend on `vite` or `webpack`.
  *
  * Future deps (intentionally NOT imported yet — they land in a later stage):
- *   - `unplugin`            — the real cross-bundler adapter factory backing vite()/webpack().
- *   - `@domflax/frontend-*` — JSX/TSX + HTML frontends feeding the pipeline.
- *   - `@domflax/backend-*`  — surgical codegen backends.
- *   - `@domflax/resolver-*` — Tailwind / custom-CSS style resolvers.
+ *   - `@domflax/frontend-html` — HTML / Astro-static frontend feeding the pipeline.
+ *   - `@domflax/backend-*`     — additional surgical codegen backends.
  */
 
 import {
@@ -55,6 +53,8 @@ import { createJsxBackend, createJsxFrontend } from '@domflax/frontend-jsx';
 import { normalizer } from '@domflax/pattern-kit';
 import { createTailwindResolver } from '@domflax/resolver-tailwind';
 import { createCssResolver } from '@domflax/resolver-css';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ── Re-export the public surface ──────────────────────────────────────────────────────────────
 export * from '@domflax/core';
@@ -355,24 +355,33 @@ export function createDomflax(options: DomflaxOptions = {}): Domflax {
 }
 
 /* ────────────────────────────────────────────────────────────────────────── *
- * Build adapters (unplugin-style, framework-agnostic shapes)
+ * Build adapters (framework-agnostic, structurally-typed shapes)
  * ────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Minimal Vite-plugin shape. Declared locally so this stub does NOT depend on `vite` (a future
- * peer). Structurally compatible with Vite's `Plugin` for the hooks domflax uses.
+ * Minimal Vite-plugin shape. Declared locally so this adapter does NOT depend on `vite`'s types
+ * (an optional, type-only peer). Structurally compatible with Vite's `Plugin` for the hooks domflax
+ * uses: `enforce: 'pre'` runs domflax before Vite's JSX→`createElement` transform, and `transform`
+ * is Vite's per-file source hook. Returning `null` is Vite's "no change" signal.
  */
 export interface DomflaxVitePlugin {
   readonly name: string;
-  readonly enforce?: 'pre' | 'post';
+  readonly enforce: 'pre';
   transform(code: string, id: string): DomflaxTransformResult | null;
 }
 
 /**
- * Vite adapter (stub). Returns a plugin whose `transform` is an honest passthrough: it yields
- * `null` (Vite's "unchanged" signal) for every module today.
+ * Vite adapter. Returns a real Vite `Plugin` (`enforce: 'pre'`) whose `transform` runs the domflax
+ * engine on `.jsx`/`.tsx` modules — strips any bundler query suffix (e.g. `App.tsx?used`) before
+ * matching, returns `{ code, map }` when the source changed, and `null` (Vite's unchanged signal)
+ * for unchanged sources and for any non-jsx/tsx module.
  *
- * Future: this will be derived from `unplugin`'s `createVitePlugin`.
+ * @example
+ * ```js
+ * // vite.config.js
+ * import domflax from 'domflax';
+ * export default { plugins: [domflax.vite({ provider: 'tailwind' })] };
+ * ```
  */
 export function vite(options: DomflaxOptions = {}): DomflaxVitePlugin {
   const engine = createDomflax(options);
@@ -382,35 +391,99 @@ export function vite(options: DomflaxOptions = {}): DomflaxVitePlugin {
     transform(code: string, id: string): DomflaxTransformResult | null {
       if (!isSupported(id, engine.options.include)) return null;
       const out = engine.transform(code, id);
-      // Signal "no change" to Vite while we passthrough.
+      // Signal "no change" to Vite when the source round-tripped unchanged.
       return out.code === code ? null : out;
     },
   };
 }
 
-/**
- * Minimal webpack-plugin shape. Declared locally so this stub does NOT depend on `webpack` (a
- * future peer). `apply(compiler)` is the webpack plugin entry point.
- */
-export interface DomflaxWebpackPlugin {
-  readonly name: string;
-  apply(compiler: unknown): void;
+/* ── webpack / Next.js ──────────────────────────────────────────────────────────────────────── */
+
+/** A `module.rule` `use` entry: an absolute loader path plus the options forwarded to it. */
+interface DomflaxRuleUse {
+  readonly loader: string;
+  readonly options: DomflaxOptions;
+}
+
+/** The slice of a webpack `module.rule` domflax appends. */
+interface DomflaxModuleRule {
+  readonly test: RegExp;
+  readonly enforce: 'pre';
+  readonly exclude: RegExp;
+  readonly use: readonly DomflaxRuleUse[];
 }
 
 /**
- * webpack adapter (stub). Returns a plugin object. Wiring a webpack loader/plugin around the core
- * pipeline lands in a later stage via `unplugin`'s `createWebpackPlugin`.
+ * Minimal webpack-compiler shape. Declared locally so this adapter does NOT depend on `webpack`'s
+ * types. domflax only needs to push a rule onto `compiler.options.module.rules`.
+ */
+export interface DomflaxWebpackCompiler {
+  options: {
+    module?: { rules?: unknown[] };
+  };
+}
+
+/**
+ * Minimal webpack-plugin shape. `apply(compiler)` is the webpack plugin entry point.
+ */
+export interface DomflaxWebpackPlugin {
+  readonly name: string;
+  apply(compiler: DomflaxWebpackCompiler): void;
+}
+
+/** `.jsx`/`.tsx` modules only (combinator-free with the JSX frontend; `.js`/`.ts` are skipped). */
+const WEBPACK_JSX_TEST = /\.[jt]sx$/;
+
+/**
+ * Absolute path to the bundled webpack loader (`./webpack-loader`). Resolved lazily against THIS
+ * module's location so it works whether `domflax` is loaded as ESM (`dist/index.js`) or CJS
+ * (`dist/index.cjs`) — both sit beside `dist/webpack-loader.cjs`. webpack requires loaders via
+ * CommonJS, so we always point at the `.cjs` output.
+ */
+function webpackLoaderPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, 'webpack-loader.cjs');
+}
+
+/**
+ * webpack adapter (also the Next.js path). Returns a plugin whose `apply(compiler)` injects a
+ * pre-enforced `module.rule` that invokes the domflax {@link ./webpack-loader loader} on every
+ * `.jsx`/`.tsx` module. The loader runs the SAME lazy engine as {@link createDomflax} (no eager
+ * Tailwind/postcss load).
  *
- * For now `apply` is a no-op (honest passthrough — the build is left untouched).
+ * Next.js wiring (`next.config.js`) — Next exposes the underlying webpack config via `webpack(config)`:
+ * ```js
+ * // next.config.js
+ * const domflax = require('domflax');
+ * module.exports = {
+ *   webpack(config) {
+ *     domflax.webpack({ provider: 'tailwind' }).apply(config);
+ *     return config;
+ *   },
+ * };
+ * ```
+ * `apply(compiler)` is intentionally duck-typed on `compiler.options.module.rules`, so it accepts
+ * both a real webpack `Compiler` and the bare `config` object Next.js hands you.
+ *
+ * Caveat: this targets the webpack builder only. **Turbopack is not yet supported** — it does not
+ * accept arbitrary webpack loaders, so the `next.config.js` wiring above is a no-op under
+ * `next dev --turbopack`. Run domflax through the webpack builder until Turbopack exposes a loader API.
  */
 export function webpack(options: DomflaxOptions = {}): DomflaxWebpackPlugin {
-  // Construct the engine so options validate identically across adapters.
+  // Validate options eagerly (parity with the other adapters); the resolver stays lazy.
   createDomflax(options);
   return {
     name: 'domflax',
-    apply(_compiler: unknown): void {
-      // Honest passthrough: no loaders/hooks registered yet.
-      // Future: createDomflax(options) drives an unplugin webpack plugin here.
+    apply(compiler: DomflaxWebpackCompiler): void {
+      const mod = (compiler.options.module ??= {});
+      const rules = (mod.rules ??= []);
+      const rule: DomflaxModuleRule = {
+        test: WEBPACK_JSX_TEST,
+        enforce: 'pre',
+        exclude: /node_modules/,
+        use: [{ loader: webpackLoaderPath(), options }],
+      };
+      rules.push(rule);
     },
   };
 }

@@ -6,6 +6,8 @@ export default defineConfig({
     'pattern-kit': 'src/pattern-kit.ts',
     verify: 'src/verify.ts',
     cli: 'src/cli.ts',
+    // Bundled webpack loader — webpack requires it by absolute path (see `webpack()` in src/index.ts).
+    'webpack-loader': 'src/webpack-loader.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,
