@@ -69,7 +69,7 @@ export async function execute(options: CliOptions): Promise<RunResult> {
   for (const w of warnings) console.error(`domflax: ${w}`);
 
   if (files.length === 0) {
-    console.error('domflax: no .jsx/.tsx/.html files found for the given paths');
+    console.error('domflax: no .jsx/.tsx files found for the given paths');
     return { exitCode: 1 };
   }
 
@@ -126,9 +126,21 @@ export async function execute(options: CliOptions): Promise<RunResult> {
     }
   }
 
-  if (options.report) printReport(totals);
+  // Always tell the user what happened — never exit silently.
+  if (options.dryRun) {
+    console.log('\ndomflax: dry run — no files were written.');
+  } else if (totals.changed === 0) {
+    console.log(
+      `\ndomflax: processed ${totals.files} file${totals.files === 1 ? '' : 's'} — nothing to optimize (0 changed).`,
+    );
+  } else {
+    console.log(
+      `\ndomflax: optimized ${totals.changed} of ${totals.files} file${totals.files === 1 ? '' : 's'} ` +
+        `(${totals.nodesRemoved} nodes removed, ${totals.classesSaved} classes saved, ${totals.bytesSaved} bytes saved).`,
+    );
+  }
 
-  if (options.dryRun) console.log('\ndomflax: dry run — no files were written.');
+  if (options.report) printReport(totals);
 
   return { exitCode: failures > 0 ? 1 : 0 };
 }

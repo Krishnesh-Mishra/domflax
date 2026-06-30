@@ -50,6 +50,24 @@ describe('detect', () => {
     it('returns an empty list (never throws) for a missing root', () => {
       expect(detectCssFiles(path.join(root, 'does-not-exist'))).toEqual([]);
     });
+
+    it('scans an explicitly-given folder even when it is a build dir (e.g. dist)', () => {
+      touch('dist/assets/site.css'); // skipped from the project root...
+      touch('src/app.css');
+      // From the root alone, dist is excluded:
+      expect(detectCssFiles(root)).toEqual(['src/app.css']);
+      // ...but given dist as an explicit scan root, its CSS is detected too (de-duped, sorted).
+      expect(detectCssFiles(root, [path.join(root, 'dist')])).toEqual([
+        'dist/assets/site.css',
+        'src/app.css',
+      ]);
+    });
+
+    it('descends only up to the requested depth', () => {
+      touch('a/b/c/shallow.css'); // 3 levels deep
+      touch('a/b/c/d/e/deep.css'); // 5 levels deep
+      expect(detectCssFiles(root, [], 3)).toEqual(['a/b/c/shallow.css']);
+    });
   });
 
   describe('detectInputDirs', () => {

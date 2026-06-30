@@ -27,7 +27,7 @@ It rewrites only the **static shape** of your markup. Dynamic class lists (`clas
 - **Flattening is conservative.** A wrapper is removed only when removal is *provably* render-neutral — it establishes no layout context and has no style to reproduce on its child. It never drops a style it can't reproduce, and never touches a wrapper a CSS selector depends on (`.list > .item h3`).
 - domflax runs as a **purely static** source transform. It never launches a browser, so builds stay fast and deterministic.
 
-> **Status: v0.1.1.** Works end-to-end on real `.jsx`/`.tsx` — in component-return position **and inside `.map()` / expressions (list rows)** — via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. 22 patterns. Wrappers that establish a layout context (e.g. `flex`/`grid` centering) are **conservatively preserved** — proving those render-identical needs context a static pass can't see; recovering them safely is on the Roadmap. APIs may change before 1.0.
+> **Status: v0.1.2.** Works end-to-end on real `.jsx`/`.tsx` — in component-return position **and inside `.map()` / expressions (list rows)** — via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. 22 patterns. Wrappers that establish a layout context (e.g. `flex`/`grid` centering) are **conservatively preserved** — proving those render-identical needs context a static pass can't see; recovering them safely is on the Roadmap. APIs may change before 1.0.
 
 ## Install
 
