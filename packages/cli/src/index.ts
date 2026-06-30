@@ -9,7 +9,6 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import type { CliOptions } from './options';
 import { parseInvocation, shouldPrompt, USAGE } from './options';
@@ -184,23 +183,6 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 }
 
-/**
- * True only when this module is the process entry (the `domflax-cli` bin), not when imported. Paths
- * are normalized (and case-folded on win32) so the comparison survives drive-letter case and
- * separator differences between `import.meta.url` and `process.argv[1]`.
- */
-function isMainEntry(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    const self = path.resolve(fileURLToPath(import.meta.url));
-    const argv = path.resolve(entry);
-    return process.platform === 'win32' ? self.toLowerCase() === argv.toLowerCase() : self === argv;
-  } catch {
-    return false;
-  }
-}
-
-if (isMainEntry()) {
-  void main();
-}
+// NOTE: no self-invocation here. `main()` is invoked exactly once by the published
+// bin wrapper (packages/domflax/src/cli.ts). Auto-running on import caused the CLI
+// to execute twice when this module is bundled into the `domflax` bin.

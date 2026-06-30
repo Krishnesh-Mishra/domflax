@@ -189,6 +189,17 @@ const check = (label, cond) => {
   }
 }
 
+// 8) CLI bin must execute EXACTLY ONCE. A bundled self-invocation in @domflax/cli
+//    previously ran the whole CLI twice (every prompt/message duplicated).
+{
+  const { spawnSync } = await import('node:child_process');
+  const cliBin = path.join(here, '..', 'packages', 'domflax', 'dist', 'cli.cjs');
+  const res = spawnSync(process.execPath, [cliBin], { input: '', encoding: 'utf8' });
+  const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+  const runs = (out.match(/no input paths/g) || []).length;
+  check('CLI bin executes exactly once (no double-invocation)', runs === 1);
+}
+
 if (failures.length > 0) {
   console.error(`\nSMOKE FAIL: ${failures.length} assertion(s) failed:`);
   for (const f of failures) console.error(`  - ${f}`);
