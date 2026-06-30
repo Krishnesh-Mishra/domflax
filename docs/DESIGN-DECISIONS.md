@@ -98,6 +98,16 @@ never break it. (For *dynamic* HTML you control, see the runtime optimizer, Q15.
 
 ---
 
+### Q10b. Does flattening recurse until nothing more can be flattened?
+**Decision:** Yes — the flatten pass runs to a **fixpoint**: removing one wrapper can expose a new
+opportunity (freed parent, newly-adjacent siblings), so it re-checks and repeats until a full pass
+makes zero changes; compress then runs to its own fixpoint. **At BUILD time, not the user's runtime**
+— the browser gets the already-minimized DOM and does no per-render recursion. **Terminates** because
+each flatten strictly reduces node count (monotonic) + a max-iteration budget backstop;
+`runInvariants` asserts no oscillation. **Efficiency:** the production approach is a worklist /
+dirty-region re-queue (only re-examine the neighborhood of a mutation), not a full tree re-scan each
+iteration — near-linear on large/deeply-nested DOM (perf hardening target).
+
 ## E. Runtime techniques
 
 ### Q13. `<template>` + `cloneNode` is why Solid is fast — can we bring it to React automatically?
@@ -144,6 +154,18 @@ never hangs CI. Flags remain the scriptable path; wizard and flags build the sam
 rewrite recipes (`flattenInto`, `childGains`, …), and **automatic opacity + selector-safety guards**
 for flatten patterns (you can't forget a guard). One import. The verbose `evaluate`/combinator form
 stays as the escape hatch for exotic patterns. Compiles down to the existing engine.
+
+### Q19b. Auto-discover patterns by file convention (no manual index)?
+**Decision:** Yes — patterns are discovered by the suffix convention `src/**/*.pattern.ts` (any
+subfolder, any depth), so adding a pattern = drop one file; no `index.ts` edits, no merge conflicts,
+nothing to forget. **How (must be correct for a bundled lib):** a build-time **codegen** step globs
+`*.pattern.ts` and writes a generated registry barrel (`src/_registry.generated.ts`) with explicit
+imports + the assembled `builtinPatterns` — NOT a runtime `fs` scan (the published package is a
+bundle; browsers/bundlers can't `readdir`). Ordering comes from each pattern's declared
+`category`/priority, NOT filesystem order (nondeterministic across OSes). Codegen validates unique
+names + valid exports. Runs in `prebuild`; a dev watcher regenerates. The generated file is a
+gitignored build artifact. Pairs with Q18/Q19: drop a `*.pattern.ts` → auto-discovered → auto-tested
+→ CI-Chromium-proven, zero manual wiring.
 
 ### Q19. Do we hand-write a test per pattern? Can tests be automatic?
 **Decision:** **No hand tests.** Because `match` is structured data, the framework **generates test
