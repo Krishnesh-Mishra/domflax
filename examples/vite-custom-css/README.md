@@ -2,10 +2,10 @@
 
 A runnable example that wires [`domflax`](../../packages/domflax) into a plain
 **Vite + React** app (no Tailwind) using the **custom-CSS provider**. It shows
-domflax resolving class names against a hand-written stylesheet, and it demonstrates
-the two **safety guarantees** that stop it from removing a wrapper when doing so would
-change the rendering: **selector-safety** (a wrapper a CSS combinator depends on) and
-**residual-skip** (a centering wrapper whose residual style has no class to land on).
+domflax resolving class names against a hand-written stylesheet, flattening the
+wrappers it can prove are inert, and **preserving** the two kinds of wrapper it must
+not touch: one a CSS combinator depends on (**selector-safety**), and a flex
+**centering** wrapper (**conservatively preserved**).
 
 > This example is **standalone** — it is not a workspace member. It depends on the
 > local `domflax` package via `"domflax": "file:../../packages/domflax"`.
@@ -17,24 +17,24 @@ stylesheets you list in `cssFiles` (via `postcss` + `postcss-selector-parser`) a
 builds two maps from them:
 
 - **forward** (`class → computed style`): so it can tell what each `className`
-  actually paints/lays out, e.g. that `.center` is `display:flex; align-items:center;
-  justify-content:center` — a centering wrapper.
+  actually paints/lays out — e.g. that `.contents` is `display:contents` (an inert
+  wrapper) while `.center` is `display:flex; align-items:center; justify-content:center`
+  (a centering wrapper).
 - **reverse** (`computed style → class`): so any styles it pushes onto another element
   can be re-emitted as existing class names from your CSS.
 
 It also records **selector participation** for every class (is it the subject of a
 rule? an ancestor in a combinator? a sibling? inside `:has()`? a structural pseudo?)
-and the set of **complex selectors** (anything with a combinator like `>`/`+`/`~` or a
-structural pseudo). That information is what the selector-safety guard is designed to
-consume.
+and the set of **complex selectors** (anything with a combinator like `>`/`+`/`~`).
+That information is what the selector-safety guard consumes.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `vite.config.ts` | Registers `domflax.vite({ provider: 'custom', cssFiles: ['./src/styles.css'] })` **before** `@vitejs/plugin-react`. |
-| `src/styles.css` | Hand-written CSS: `.center`, `.card`, `.muted`, `.item`, and the combinator rule `.list > .item h3`. |
-| `src/App.tsx` | Two demo structures: a flatten candidate and a selector-safety candidate. |
+| `src/styles.css` | Hand-written CSS: `.center`, `.card`, `.muted`, `.contents`, `.list-plain`, `.item`, and the combinator rule `.list > .item h3`. |
+| `src/App.tsx` | Three demo structures: an inert-wrapper flatten, a selector-safety preserve, and a centering preserve. |
 | `src/main.tsx` | React entry point. |
 | `index.html` | Vite HTML entry. |
 
@@ -63,31 +63,25 @@ npm run build    # production build
 `domflax` runs as an `enforce: 'pre'` source transform on `.jsx`/`.tsx` **before** React's
 JSX→`createElement` lowering. The clearest way to see its effect is to run `npm run dev`,
 open the app, and inspect the rendered DOM in your browser devtools — then compare it to
-`src/App.tsx`.
+`src/App.tsx`. `src/App.tsx` shows three cases.
 
-Both cases below demonstrate domflax's **safety guarantees** for the custom-CSS
-provider: in this stylesheet, *neither* wrapper can be safely removed, and domflax
-correctly preserves both. (For a case where flattening *does* happen and the child
-gains `place-self-center`, see the sibling `vite-react-tailwind` / `next-tailwind`
-Tailwind examples.)
-
-### Case 1 — centering wrapper (preserved by residual-skip)
+### Case A — inert wrappers are flattened (incl. inside `.map`)
 
 ```jsx
-<div className="center">       {/* only job: flex-center its child */}
-  <div className="card"> … </div>
+<div className="contents">     {/* display:contents — no box, paints nothing */}
+  <div>                        {/* empty style-less wrapper */}
+    <p className="muted">…</p>
+  </div>
 </div>
 ```
 
-`.center` has the centering signature domflax recognizes, so it is a flatten
-*candidate*. But removing it would leave a residual `place-self:center` that has to
-land on the surviving `.card` — and the custom-CSS provider can only emit class names
-that already exist in your stylesheets, and there is **no class** here that maps to
-`place-self:center`. Rather than silently drop the centering (which would move the
-card), domflax's **residual-skip** guard cancels the flatten and **keeps the
-`.center` wrapper**. Pixels unchanged.
+`.contents` is `display:contents` and the inner `<div>` is style-less; neither
+establishes a layout context or paints anything, so domflax **removes both** and
+hoists the `<p>`. The same happens to the inert wrapper `<div>` inside each
+`.map(...)` row — **list rows are optimized in 0.1.1** — while the dynamic
+`{it.name}` text and the React `key`s are preserved.
 
-### Case 2 — combinator-dependent wrapper (selector-safety)
+### Case B — combinator-dependent wrapper is preserved (selector-safety)
 
 ```jsx
 <div className="list">
@@ -103,18 +97,24 @@ that `.item`/`.list` are *load-bearing* for this combinator selector and **refus
 flatten them**, even though they paint nothing themselves — removing them would silently
 change the rendered color.
 
-## What you observe today
+### Case C — flex centering wrapper is preserved (conservative)
 
-Both guarantees are now wired into the build pipeline. Running the transform on
-`src/App.tsx` (or inspecting the built output / served DOM) shows that:
+```jsx
+<div className="center">       {/* only job: flex-center its child */}
+  <div className="card"> … </div>
+</div>
+```
 
-1. **Case 1 — `.center` is preserved** (residual-skip): the wrapper survives because
-   the residual `place-self:center` has no class to carry it in this stylesheet.
-2. **Case 2 — `.item` and `.list` are preserved** (selector-safety): the
-   `.list > .item h3` combinator depends on them.
+`.center` has the centering signature domflax recognizes — but a flex/grid wrapper
+**establishes its child's layout context**, so removing it cannot be statically proven
+render-identical. domflax therefore **conservatively keeps it**, and emits **no
+`place-self-center`**. Context-aware or opt-in-verified flattening of centering
+wrappers is a [Roadmap](../../README.md#roadmap) item.
 
-Run the transform yourself to confirm — the output is byte-for-byte the authored
-JSX shape (both wrappers intact), proving domflax declined to flatten:
+## Verify it yourself
+
+Run the transform on `src/App.tsx` and you will see the inert wrappers gone and both
+preserved wrappers intact:
 
 ```bash
 node --input-type=module -e "
@@ -125,5 +125,25 @@ console.log(eng.transform(readFileSync('src/App.tsx','utf8'), process.cwd()+'/sr
 "
 ```
 
-The app is structurally complete, type-correct, builds cleanly with `npm run build`,
-and renders identically with the plugin active.
+### In the built bundle
+
+After `npm run build`, the preserved wrappers' class names survive in the emitted JS,
+while the inert `.contents` wrapper's class is gone (it was flattened away):
+
+```bash
+grep -oh '"center"\|"item"\|"list"\|"list-plain"' dist/assets/*.js | sort | uniq -c   # preserved
+grep -oh '"contents"' dist/assets/*.js                                                # flattened — nothing
+```
+
+Observed output of the first command:
+
+```
+      1 "center"
+      1 "item"
+      1 "list"
+      1 "list-plain"
+```
+
+The second command finds **nothing**: the `display:contents` wrapper was removed, so
+its class string is no longer shipped. The app builds cleanly with `npm run build` and
+renders identically with the plugin active.

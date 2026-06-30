@@ -6,11 +6,12 @@ A small, runnable Next.js (App Router) + Tailwind CSS app that wires up **domfla
 This example is **standalone** — it is not a workspace member. It depends on the local domflax
 package via `"domflax": "file:../../packages/domflax"`.
 
-## What domflax does here
+## What domflax does here (0.1.1)
 
 domflax is a compile-time DOM flattener and semantic CSS compressor: it rewrites your `.jsx`/`.tsx`
 to the smallest equivalent DOM, matching on **computed styles** (not raw class names), so the
-rendered UI is identical while the DOM has fewer nodes and shorter class sets.
+rendered UI is identical while the DOM has fewer nodes and shorter class sets. It is **conservative
+and static-only** — it only makes a change it can prove is render-identical.
 
 `next.config.js` wires the adapter into Next's webpack config:
 
@@ -59,22 +60,29 @@ Then open http://localhost:3000 (for `npm run dev`).
 
 The page renders four demos (`app/page.tsx` + `components/`):
 
-1. **Flatten** (`FlattenDemo.tsx`) — a flex-centering wrapper and nested no-op `<div>`s around a
-   single child. domflax folds the centering onto the child and drops the redundant wrappers →
-   **fewer DOM nodes**.
-2. **Compress** (`CompressDemo.tsx`) — verbose, equivalent class sets (`px-4 py-4`, `w-8 h-8`,
-   `top-0 right-0 bottom-0 left-0`) collapse to their shortest Tailwind form → **shorter class
-   sets**, same computed styles.
-3. **List** (`ListDemo.tsx`) — a `.map(...)` list where each row has a redundant wrapper. JSX inside
-   `.map(...)` callbacks is **not optimized in v0.1.0** (list/expression optimization is a documented
-   **Stage-2 roadmap** item), so these per-row wrappers ship as authored; the dynamic `{item.*}`
-   values and **stable `key`s are preserved**. domflax v0.1.0 optimizes component-return JSX (demos 1 & 2).
+1. **Flatten — inert wrappers** (`FlattenDemo.tsx`) — wrappers that establish no layout context and
+   paint nothing collapse into their child: two nested empty `<div>`s and a single-child
+   `display:contents` wrapper are dropped → **fewer DOM nodes**. A flex-centering wrapper is
+   **conservatively preserved** (see below); its child is only compressed `h-10 w-10` → `size-10`.
+2. **Compress — verbose class sets** (`CompressDemo.tsx`) — equivalent class sets collapse to their
+   shortest Tailwind form: `px-4 py-4` → `p-4`, `w-8 h-8` → `size-8`, `top-0 right-0 bottom-0 left-0`
+   → `inset-0`, and `h-10 w-10` → `size-10` **even on an element with a dynamic `{count}` child**.
+3. **List — mapped rows** (`ListDemo.tsx`) — JSX inside `.map(...)` **is optimized in 0.1.1**: each
+   row's inert wrapper `<div>` is flattened and `px-4 py-4` → `p-4`, while the dynamic `{item.*}`
+   values and **stable `key`s are preserved**.
 4. **Async** (`AsyncDemo.tsx`) — an `async` Server Component that awaits fake fetched data. domflax
    leaves **dynamic / async content untouched** — the data renders exactly as fetched.
 
 The rendered UI is identical with and without domflax; the difference is in the emitted DOM (fewer
-nodes, shorter class lists). Compare the rendered HTML with the adapter enabled vs. commented out in
-`next.config.js` to see the reduction.
+nodes, shorter class lists).
+
+### What domflax does *not* do: flex/grid centering wrappers are preserved
+
+domflax does **not** flatten flex/grid **centering** wrappers. A flex/grid wrapper establishes its
+child's layout context, so removing it cannot be statically proven render-identical — domflax
+**conservatively preserves it**. The centering wrapper in `FlattenDemo.tsx` (and the header wrapper
+in `app/page.tsx`) is therefore **kept**, and **no `place-self-center` is emitted**. Context-aware
+or opt-in-verified flattening of those wrappers is a [Roadmap](../../README.md#roadmap) item.
 
 You can see the transform on a single component directly:
 
@@ -82,23 +90,37 @@ You can see the transform on a single component directly:
 node -e "const {createDomflax}=require('domflax');const fs=require('fs');const c=fs.readFileSync('components/FlattenDemo.tsx','utf8');console.log(createDomflax({provider:'tailwind'}).transform(c,require('path').resolve('components/FlattenDemo.tsx')).code)"
 ```
 
-For `FlattenDemo.tsx` the wrapper-centering `<div>` is removed and its child becomes
-`<div className="rounded bg-indigo-200 size-10 place-self-center" />` — `place-self-center` folded
-in (flatten) and `h-10 w-10` collapsed to `size-10` (compress). The nested three-deep no-op
-`<div>`s collapse onto their single child as well.
+For `FlattenDemo.tsx` the two nested no-op `<div>`s and the single-child `display:contents` wrapper
+are removed, while the flex-centering wrapper survives with its child compressed to
+`<div className="rounded bg-indigo-200 size-10" />`.
 
 ### In the build output
 
 After `npm run build`, the optimized classes appear directly in the emitted chunks:
 
 ```bash
-grep -rho 'place-self-center\|size-10\|inset-0\|size-8\|p-4' .next/server .next/static | sort | uniq -c
+grep -rho 'size-10\|size-8\|inset-0\|p-4' .next/server .next/static | sort | uniq -c   # compressed forms
 ```
 
-You will see `place-self-center`, `size-10`, `size-8`, `p-4`, and `inset-0` in the output — the
-compressed/flattened forms that domflax produced. (Note: the literal strings `px-4 py-4` and
-`w-8 h-8` still appear because the demo components print them as human-readable `<code>` labels;
-those are display text, not class attributes.)
+Observed output:
+
+```
+      5 inset-0
+     33 p-4
+      9 size-10
+      5 size-8
+```
+
+The verbose **class-attribute** form `top-0 right-0 bottom-0 left-0` is gone:
+
+```bash
+grep -rho 'top-0 right-0 bottom-0 left-0' .next/server .next/static   # → nothing
+```
+
+> Note: the literal strings `px-4 py-4`, `w-8 h-8`, and `h-10 w-10` still appear in the output, but
+> only because the demo components print them as human-readable `<code>` labels — those are display
+> text, not `className` attributes. The actual class attributes carrying those styles were compressed
+> to `p-4`, `size-8`, and `size-10`.
 
 ## Files
 

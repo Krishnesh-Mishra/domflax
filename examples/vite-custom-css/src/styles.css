@@ -28,6 +28,21 @@
   color: #888;
 }
 
+/* An INERT wrapper class: display:contents establishes no box and paints nothing.
+   domflax recognizes this signature and flattens such a wrapper, hoisting its
+   children — no selector here depends on it. */
+.contents {
+  display: contents;
+}
+
+/* A plain unstyled list (reset only). The <ul> itself is real UI and is kept; it is
+   the inert <div> INSIDE each row that domflax flattens. */
+.list-plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
 /* A purely structural wrapper class with NO paint of its own. On its own a
    <div class="item"> that just wraps one child looks like removable noise...
    ...EXCEPT the combinator rule below depends on it (see `.list > .item h3`). */
