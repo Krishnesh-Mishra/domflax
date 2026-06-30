@@ -11,6 +11,10 @@ scalability, build/packaging, verifier soundness). §15 lists each review findin
 
 ---
 
+> **Why is it built this way?** See the companion [DESIGN-DECISIONS.md](./DESIGN-DECISIONS.md) — a
+> living Q&A log of every design decision, the alternatives considered, and the honest limitations.
+> Read it before challenging a choice (e.g. "why Chromium?", "why not auto-clone React lists?").
+
 ## 1. Overview
 
 domflax is a classic three-stage compiler over a single **plain, serializable, framework-agnostic
