@@ -20,7 +20,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@domflax/core": "*"
+    "@domflax/core": "*",
+    "pixelmatch": "^7.1.0",
+    "playwright": "^1.49.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/pngjs": "^6.0.5"
   },
   "private": true
 }
