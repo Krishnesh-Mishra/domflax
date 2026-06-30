@@ -2,15 +2,18 @@ import { describe, it, expect } from 'vitest';
 
 import type {
   BackendContext,
+  ClassList,
   EditPlan,
   IRDocument,
   IRElement,
   IRFragment,
+  IRNodeId,
   PatternName,
+  RewriteOp,
   SyntheticClass,
   SyntheticSink,
 } from '@domflax/core';
-import { createNullResolver, elementIds, getElement } from '@domflax/core';
+import { applyOps, createNullResolver, elementIds, getElement } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 
 import { createJsxBackend, createJsxFrontend } from './index';
@@ -191,5 +194,95 @@ describe('jsx backend ← IR (re-print)', () => {
     const kids2 = elementChildren(doc2, div2);
     expect(kids2).toHaveLength(1);
     expect(getElement(doc2, kids2[0]!.id)!.tag).toBe('button');
+  });
+});
+
+/* ───────────────────────── surgical full-module codegen ───────────────────────── */
+
+// A COMPLETE module — imports, an `export default function`, hooks, a `return (…)`, and a `{title}`
+// hole — so the backend's job is to round-trip the WHOLE file, not just the JSX subtree. This is the
+// regression that the bare-fragment fixtures above could never have caught.
+const MODULE = `import React from 'react';
+
+export default function Card({ title }) {
+  const ref = React.useRef(null);
+  return (
+    <div className="wrapper-outer" ref={ref}>
+      <div className="px-4 py-4 bg-white">{title}</div>
+    </div>
+  );
+}
+`;
+
+/** Replace an element's static class tokens, preserving its original value span (what reverse-emit does). */
+function setStaticTokens(el: IRElement, tokens: readonly string[]): void {
+  const next: ClassList = {
+    form: 'string-literal',
+    segments: [{ kind: 'static', span: el.classes.segments[0]?.span, tokens: tokens.map((value) => ({ value })) }],
+    valueSpan: el.classes.valueSpan,
+    attrSpan: el.classes.attrSpan,
+    hasDynamic: false,
+    opaque: false,
+    rewritable: true,
+  };
+  el.classes = next;
+  el.meta.touched = true;
+}
+
+describe('jsx backend ← IR (surgical full-module codegen)', () => {
+  it('round-trips a FULL module verbatim when nothing was optimized', () => {
+    const doc = parse(MODULE);
+    const out = printDoc(doc);
+    // The surrounding module — NOT just the JSX subtree — survives byte-for-byte.
+    expect(out).toBe(MODULE);
+  });
+
+  it('rewrites ONLY the changed className value, leaving all surrounding code intact', () => {
+    const doc = parse(MODULE);
+    // outer div → inner div (the one with px-4 py-4 bg-white)
+    const innerDiv = elementChildren(doc, rootElements(doc)[0]!)[0]!;
+    setStaticTokens(innerDiv, ['p-4', 'bg-white']);
+
+    const out = printDoc(doc);
+
+    // surrounding module survives …
+    expect(out).toContain("import React from 'react';");
+    expect(out).toContain('export default function Card({ title })');
+    expect(out).toContain('const ref = React.useRef(null);');
+    expect(out).toContain('return (');
+    expect(out).toContain('{title}');
+    expect(out).toContain('ref={ref}'); // dynamic attr on the outer div untouched
+    expect(out).toContain('className="wrapper-outer"'); // outer class untouched
+
+    // … and ONLY the inner class value changed.
+    expect(out).toContain('className="p-4 bg-white"');
+    expect(out).not.toContain('px-4');
+    expect(out).not.toContain('py-4');
+  });
+
+  it('unwraps a wrapper by deleting only its tags — child subtree (and {title}) preserved verbatim', () => {
+    const doc = parse(MODULE);
+    const outerId: IRNodeId = rootElements(doc)[0]!.id;
+    const op: RewriteOp = {
+      op: 'unwrap',
+      target: outerId,
+      origin: { pattern: 'test/unwrap', category: 'flatten/test', safety: 0 },
+    };
+    const { doc: out } = applyOps(doc, [op], { safetyCeiling: 3 });
+    const printed = printDoc(out);
+
+    // The whole module shell survives …
+    expect(printed).toContain("import React from 'react';");
+    expect(printed).toContain('export default function Card({ title })');
+    expect(printed).toContain('return (');
+
+    // … the wrapper's tags are gone (its className no longer appears) …
+    expect(printed).not.toContain('wrapper-outer');
+
+    // … and the surviving child + its {title} hole are preserved verbatim.
+    expect(printed).toContain('<div className="px-4 py-4 bg-white">{title}</div>');
+
+    // Re-printed output is itself valid JSX/TSX the frontend can re-parse.
+    expect(() => parse(printed)).not.toThrow();
   });
 });

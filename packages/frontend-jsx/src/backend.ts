@@ -1,27 +1,36 @@
 /**
- * @domflax/frontend-jsx — IR → JSX/TSX backend (CORRECTNESS-FIRST re-print).
+ * @domflax/frontend-jsx — IR → JSX/TSX backend (SURGICAL, full-module round-trip).
  *
- * Walks the (possibly mutated) {@link IRDocument} and emits valid, equivalent JSX/TSX text:
- *   • intrinsic tags keep their (lowercase) name, components keep their (capitalized/member) name;
- *   • `className` is rebuilt from the {@link ClassList} tokens (static) or its dynamic ExprRef;
- *   • other attributes re-print from the {@link AttrMap} (static string/boolean or dynamic ExprRef);
- *   • spreads re-print as `{...expr}`; children recurse; an {@link IRExpr} re-prints from its
- *     registry source slice as `{expr}` (or `{...expr}` for a spread child); {@link IRText} prints
- *     verbatim (so original whitespace/formatting is preserved across untouched regions).
+ * The pass manager mutates a tree of JSX *islands* that were lowered from a complete module
+ * (imports, `export default function`, hooks, `return (…)`, `{expr}` holes, comments, …). The
+ * backend's job is to emit a COMPLETE, valid module — not just the JSX subtree. It does this by
+ * starting from the element's ORIGINAL verbatim source (retained on {@link SourceFile.text}) and
+ * applying ONLY the diffs the passes produced, via `magic-string`:
  *
- * This is a clean full re-print — NOT surgical magic-string span-splicing. Minimal-diff codegen
- * (replaying the EditPlan's ops against retained source via BackrefTable spans) is a later
- * refinement; the goal here is output that is valid and semantically equivalent to the IR.
+ *   • CLASS CHANGE — for every surviving element whose static class list differs from its source
+ *     text, overwrite just the `class`/`className` attribute VALUE span (quotes included) with the
+ *     new tokens. If the element gained classes but had no class attribute, insert one on the
+ *     opening tag.
+ *   • UNWRAP (flatten) — when a wrapper element/fragment was removed but its children survived,
+ *     delete ONLY the wrapper's open- and close-tag spans; the children (and their entire subtrees,
+ *     including dynamic `{expr}` holes and `key=`) are preserved verbatim.
+ *   • FULL REMOVAL — when a node was removed with no surviving descendant, delete its whole span.
  *
- * Known limitation (documented, not faked): original attribute ordering relative to spreads is not
- * preserved — `className` is emitted first, then ordered attributes, then spreads. For non-
- * conflicting props this is semantically equivalent.
+ * Every other byte — imports, exports, function declarations, returns, hooks, `{expr}` holes,
+ * whitespace, comments, attribute ordering — is left exactly as authored. Output is
+ * `magicString.toString()`: a complete module.
+ *
+ * Fallback: a document with no retained source (e.g. a hand-synthesized IR) cannot be spliced, so
+ * it falls back to a clean structural re-print ({@link rePrint}).
  */
+
+import MagicString from 'magic-string';
 
 import type {
   AttrValue,
   Backend,
   BackendContext,
+  Backref,
   ClassList,
   CodegenResult,
   EditPlan,
@@ -29,7 +38,10 @@ import type {
   FileKind,
   IRDocument,
   IRElement,
+  IRNode,
   IRNodeId,
+  SourceFile,
+  SourceSpan,
 } from '@domflax/core';
 
 const JSX_LANGS: readonly FileKind[] = ['jsx', 'tsx'];
@@ -38,6 +50,8 @@ interface ExprPayload {
   readonly text: string;
   readonly spread: boolean;
 }
+
+/* ───────────────────────── shared expr/class helpers ───────────────────────── */
 
 /** Recover an interned expression's source text (payload first, span-slice fallback). */
 function exprText(doc: IRDocument, ref: ExprRef): ExprPayload {
@@ -53,6 +67,159 @@ function exprText(doc: IRDocument, ref: ExprRef): ExprPayload {
   return { text: '', spread: false };
 }
 
+/** All static class tokens of a {@link ClassList}, in order. */
+function staticTokensOf(classes: ClassList): string[] {
+  const out: string[] = [];
+  for (const seg of classes.segments) {
+    if (seg.kind === 'static') for (const t of seg.tokens) out.push(t.value);
+  }
+  return out;
+}
+
+/* ───────────────────────── surgical (magic-string) codegen ───────────────────────── */
+
+/** Pick the single retained source file this document was parsed from (if any). */
+function primarySource(doc: IRDocument): SourceFile | null {
+  for (const sf of doc.sources.values()) {
+    if (typeof sf.text === 'string' && sf.text.length > 0) return sf;
+  }
+  return null;
+}
+
+/** Collect every node reachable from the root of the (mutated) tree. */
+function collectKept(doc: IRDocument): IRNode[] {
+  const out: IRNode[] = [];
+  const seen = new Set<IRNodeId>();
+  const visit = (id: IRNodeId): void => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const n = doc.nodes.get(id);
+    if (!n) return;
+    out.push(n);
+    if (n.kind === 'element' || n.kind === 'fragment') for (const c of n.children) visit(c);
+  };
+  visit(doc.root);
+  return out;
+}
+
+/** Span `a` strictly contains span `b` (same file, b nested inside, not identical). */
+function strictlyContains(a: SourceSpan, b: SourceSpan): boolean {
+  if (a.file !== b.file) return false;
+  if (a.start <= b.start && b.end <= a.end) return !(a.start === b.start && a.end === b.end);
+  return false;
+}
+
+interface RemovedRegion {
+  readonly backref: Backref;
+  /** A surviving node nested inside this region ⇒ this was an UNWRAP (keep inner, drop tags). */
+  readonly unwrapped: boolean;
+}
+
+/**
+ * Apply the class-list diff for a single surviving element. Returns true if an edit was made.
+ */
+function editClasses(ms: MagicString, doc: IRDocument, sf: SourceFile, el: IRElement): boolean {
+  const classes = el.classes;
+  // Wholly dynamic / opaque class lists are never rewritten by the passes — leave verbatim.
+  if (classes.hasDynamic || classes.opaque) return false;
+
+  const tokens = staticTokensOf(classes);
+  const valueSpan = classes.valueSpan;
+
+  if (valueSpan && valueSpan.file === sf.id) {
+    const current = sf.text.slice(valueSpan.start, valueSpan.end);
+    // Preserve the original quote style; default to double quotes when we can't detect one.
+    const quote = current.startsWith("'") ? "'" : '"';
+    const next = `${quote}${tokens.join(' ')}${quote}`;
+    if (current !== next) {
+      ms.overwrite(valueSpan.start, valueSpan.end, next);
+      return true;
+    }
+    return false;
+  }
+
+  // No class attribute originally, but the passes added classes ⇒ insert one on the opening tag.
+  if (tokens.length === 0) return false;
+  if (el.isComponent) return false; // never synthesize className onto an opaque component
+  const back = doc.backref.get(el.id);
+  const openTag = back?.openTagSpan;
+  if (!openTag || openTag.file !== sf.id) return false;
+  // Insert immediately after the tag name: `<tag‸ …`.
+  const insertAt = openTag.start + 1 + el.tag.length;
+  ms.appendLeft(insertAt, ` className="${tokens.join(' ')}"`);
+  return true;
+}
+
+/** Surgical full-module codegen. Returns null when the document has no retained source. */
+function surgicalPrint(doc: IRDocument): string | null {
+  const sf = primarySource(doc);
+  if (!sf) return null;
+
+  const ms = new MagicString(sf.text);
+
+  const kept = collectKept(doc);
+  const keptSpans: SourceSpan[] = [];
+  for (const n of kept) if (n.span && n.span.file === sf.id) keptSpans.push(n.span);
+
+  // 1) Structural removals. A node present in the backref table but absent from the live node map
+  //    was removed by the passes. Classify each as an UNWRAP (a surviving node nests inside it) or
+  //    a FULL removal (nothing survived inside).
+  const removed: RemovedRegion[] = [];
+  for (const id of backrefIds(doc)) {
+    if (doc.nodes.has(id)) continue; // still live
+    const back = doc.backref.get(id);
+    if (!back || back.span.file !== sf.id) continue;
+    const unwrapped = keptSpans.some((k) => strictlyContains(back.span, k));
+    removed.push({ backref: back, unwrapped });
+  }
+
+  // Skip any removed region nested inside a FULL-removal region (its bytes are already deleted by
+  // the ancestor) — this keeps every delete disjoint, which magic-string requires.
+  const fullRemovals = removed.filter((r) => !r.unwrapped).map((r) => r.backref.span);
+  for (const r of removed) {
+    const span = r.backref.span;
+    const coveredByFull = fullRemovals.some((f) => f !== span && strictlyContains(f, span));
+    if (coveredByFull) continue;
+
+    if (r.unwrapped) {
+      // Delete only the wrapper's tags; keep its (surviving) inner content verbatim.
+      const open = r.backref.openTagSpan;
+      const close = r.backref.closeTagSpan;
+      if (open && open.file === sf.id && open.end > open.start) ms.remove(open.start, open.end);
+      if (close && close.file === sf.id && close.end > close.start) {
+        ms.remove(close.start, close.end);
+      }
+    } else {
+      ms.remove(span.start, span.end);
+    }
+  }
+
+  // 2) Class-list diffs on every surviving element.
+  for (const n of kept) {
+    if (n.kind === 'element') editClasses(ms, doc, sf, n);
+  }
+
+  return ms.toString();
+}
+
+/** All ids the backref table knows about (every originally-parsed element / fragment). */
+function backrefIds(doc: IRDocument): IRNodeId[] {
+  // The backref table is shared verbatim from parse time; collect ids by scanning original spans we
+  // recorded for live + removed nodes. We don't have a public iterator, so reconstruct the universe
+  // from the live nodes plus their (now-removed) original ancestry isn't possible directly — instead
+  // ask the table for each id we can reach. The table exposes `get`; the set of candidate ids is the
+  // contiguous allocation range [1, alloc.peek). Scanning that range is O(n) and dependency-free.
+  const out: IRNodeId[] = [];
+  const max = doc.alloc.peek as unknown as number;
+  for (let i = 1; i < max; i += 1) {
+    const id = i as IRNodeId;
+    if (doc.backref.get(id)) out.push(id);
+  }
+  return out;
+}
+
+/* ───────────────────────── structural re-print (fallback) ───────────────────────── */
+
 /** Re-build the `className=…` attribute (or null when the element has no class list). */
 function classText(doc: IRDocument, classes: ClassList): string | null {
   if (classes.form === 'absent' || classes.segments.length === 0) return null;
@@ -62,10 +229,7 @@ function classText(doc: IRDocument, classes: ClassList): string | null {
     return `className={${exprText(doc, dynamic.expr).text}}`;
   }
 
-  const tokens: string[] = [];
-  for (const seg of classes.segments) {
-    if (seg.kind === 'static') for (const t of seg.tokens) tokens.push(t.value);
-  }
+  const tokens = staticTokensOf(classes);
   return `className="${tokens.join(' ')}"`;
 }
 
@@ -91,9 +255,7 @@ function printElement(doc: IRDocument, el: IRElement): string {
     if (text.length > 0) parts.push(text);
   }
 
-  for (const ref of el.attrs.spreads) {
-    parts.push(`{...${exprText(doc, ref).text}}`);
-  }
+  for (const ref of el.attrs.spreads) parts.push(`{...${exprText(doc, ref).text}}`);
 
   const attrStr = parts.length > 0 ? ` ${parts.join(' ')}` : '';
   const tag = el.tag;
@@ -125,11 +287,17 @@ function printNode(doc: IRDocument, id: IRNodeId): string {
   }
 }
 
-function doPrint(doc: IRDocument): string {
+function rePrint(doc: IRDocument): string {
   const root = doc.nodes.get(doc.root);
   if (!root || root.kind !== 'fragment') return printNode(doc, doc.root);
-  // The document root is an implicit fragment: print its children with no `<>` wrapper.
   return root.children.map((c) => printNode(doc, c)).join('');
+}
+
+/* ───────────────────────── public backend ───────────────────────── */
+
+function doPrint(doc: IRDocument): string {
+  const surgical = surgicalPrint(doc);
+  return surgical ?? rePrint(doc);
 }
 
 export const jsxBackend: Backend = {

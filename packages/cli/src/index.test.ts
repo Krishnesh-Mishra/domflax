@@ -68,6 +68,41 @@ describe('createTransform — flatten', () => {
     expect(result.stats.nodesRemoved).toBeGreaterThan(0);
   });
 
+  it('round-trips a FULL module: keeps import/export/function/{title}, flattens, compresses', () => {
+    const code = [
+      "import React from 'react';",
+      '',
+      'export default function Card({ title }) {',
+      '  return (',
+      '    <div className="w-full h-full flex justify-center items-center">',
+      '      <div className="px-4 py-4 bg-white">{title}</div>',
+      '    </div>',
+      '  );',
+      '}',
+      '',
+    ].join('\n');
+
+    const { transformFile } = createTransform(parseInvocation(['Card.tsx', '--dry-run']));
+    const result = transformFile(code, 'Card.tsx');
+
+    expect(result.passthrough).toBe(false);
+    expect(result.changed).toBe(true);
+
+    // surrounding module survives (the regression: the backend used to drop ALL of this) …
+    expect(result.code).toContain("import React from 'react';");
+    expect(result.code).toContain('export default function Card({ title })');
+    expect(result.code).toContain('return (');
+    expect(result.code).toContain('{title}');
+
+    // … the wrapper flattened, child gained place-self-center, px-4 py-4 → p-4.
+    expect(result.code).not.toContain('justify-center');
+    expect(result.code).toContain('place-self-center');
+    expect(result.code).toContain('p-4');
+    expect(result.code).not.toContain('px-4');
+    expect(result.code).toContain('bg-white');
+    expect(result.stats.nodesRemoved).toBeGreaterThan(0);
+  });
+
   it('passes through non-jsx/tsx files unchanged', () => {
     const css = '.x { color: red }';
     const { transformFile } = createTransform(parseInvocation(['styles.css']));

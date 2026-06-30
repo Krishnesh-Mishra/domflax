@@ -40,6 +40,40 @@ const check = (label, cond) => {
   if (!cond) failures.push(label);
 };
 
+// 0) REAL MODULE round-trip — the regression that hid the destructive backend. The built dist must
+//    transform a COMPLETE module (imports + `export default function` + hooks + `return (…)` +
+//    `{title}` hole) WITHOUT dropping any surrounding code, while still flattening + compressing.
+{
+  const code = [
+    "import React from 'react';",
+    '',
+    'export default function Card({ title }) {',
+    '  return (',
+    '    <div className="w-full h-full flex justify-center items-center">',
+    '      <div className="px-4 py-4 bg-white">{title}</div>',
+    '    </div>',
+    '  );',
+    '}',
+    '',
+  ].join('\n');
+  const { code: out } = createDomflax().transform(code, 'Card.tsx');
+  console.log('  [real-module] out:\n' + out);
+  // Surrounding module survives byte-regions intact.
+  check('real module kept import', out.includes("import React from 'react';"));
+  check('real module kept `export default function Card`', out.includes('export default function Card({ title })'));
+  check('real module kept the return statement', out.includes('return ('));
+  check('real module kept the {title} hole', out.includes('{title}'));
+  // …and the optimization still applied through the built dist.
+  check('real module flattened the wrapper', !out.includes('justify-center') && !out.includes('w-full'));
+  check('real module pushed place-self-center onto the child', out.includes('place-self-center'));
+  check('real module compressed px-4 py-4 → p-4', out.includes('p-4') && !out.includes('px-4') && !out.includes('py-4'));
+  check('real module kept bg-white', out.includes('bg-white'));
+  // The output is a complete module — re-transforming it must not throw.
+  let reok = true;
+  try { createDomflax().transform(out, 'Card.tsx'); } catch { reok = false; }
+  check('real module output is itself a valid module (re-transforms cleanly)', reok);
+}
+
 // 1) Flex-centering wrapper flattens AND the centering intent survives as place-self-center.
 {
   const code =
