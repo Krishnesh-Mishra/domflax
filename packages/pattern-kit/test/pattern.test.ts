@@ -23,9 +23,9 @@ import {
   runPasses,
 } from '@domflax/core';
 
-import { normalizer } from './normalize';
-import { definePattern, type AuthoredPattern } from './pattern';
-import { runAutoTests, runInvariants, type Transform } from './testing';
+import { normalizer } from '../src/normalize';
+import { definePattern, type AuthoredPattern } from '../src/pattern';
+import { runAutoTests, runInvariants, type Transform } from '../src/testing';
 
 /* ───────────────────────── fixtures ───────────────────────── */
 

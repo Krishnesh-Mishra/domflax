@@ -4,7 +4,7 @@ import type { CssProperty, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey, emptyStyleMap } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 
-import { CustomCSSResolver, createCssResolver } from './index';
+import { CustomCSSResolver, createCssResolver } from '../src/index';
 
 const SAMPLE = `
   .card { padding: 1rem; display: flex }

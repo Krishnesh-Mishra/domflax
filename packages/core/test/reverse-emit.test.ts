@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
-import { BASE_CONDITION, conditionKey, createDocument, createElement, defaultMeta } from './builders';
-import { syncClassesFromComputed } from './reverse-emit';
+import { BASE_CONDITION, conditionKey, createDocument, createElement, defaultMeta } from '../src/builders';
+import { syncClassesFromComputed } from '../src/reverse-emit';
 import type {
   ClassList,
   ConditionKey,
@@ -17,7 +17,7 @@ import type {
   StyleMap,
   StyleNormalizer,
   StyleResolver,
-} from './types';
+} from '../src/types';
 
 /* ───────────────────────── tiny test doubles ───────────────────────── */
 

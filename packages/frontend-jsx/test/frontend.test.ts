@@ -16,7 +16,7 @@ import type {
 import { applyOps, createNullResolver, elementIds, getElement } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 
-import { createJsxBackend, createJsxFrontend } from './index';
+import { createJsxBackend, createJsxFrontend } from '../src/index';
 
 /* ───────────────────────── fixtures ───────────────────────── */
 

@@ -25,7 +25,7 @@ import type {
   StyleMap,
   StyleNormalizer,
   StyleResolver,
-} from './types';
+} from '../src/types';
 import {
   BASE_CONDITION,
   BASE_CONDITION_KEY,
@@ -36,7 +36,7 @@ import {
   emptyStyleMap,
   getElement,
   runPasses,
-} from './index';
+} from '../src/index';
 
 /* ───────────────────────── helpers ───────────────────────── */
 

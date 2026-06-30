@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { createDomflax } from './index';
+import { createDomflax } from '../src/index';
 
 /* ───────────────────────── verify OFF (default) — conservative, never changes rendering ───────────────────────── */
 

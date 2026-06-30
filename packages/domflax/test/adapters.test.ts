@@ -6,7 +6,7 @@ import domflax, {
   webpack,
   type DomflaxTransformResult,
   type DomflaxWebpackCompiler,
-} from './index';
+} from '../src/index';
 
 /** Narrow vite's sync (verify-off) transform result for assertions. */
 function sync(r: DomflaxTransformResult | null | Promise<DomflaxTransformResult | null>): DomflaxTransformResult | null {

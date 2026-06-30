@@ -4,7 +4,7 @@ import type { CssProperty, StyleMap } from '@domflax/core';
 import { BASE_CONDITION, conditionKey } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 
-import { createTailwindResolver } from './index';
+import { createTailwindResolver } from '../src/index';
 
 const base = (sm: StyleMap) => sm.blocks.get(conditionKey(BASE_CONDITION));
 const val = (sm: StyleMap, prop: string) => base(sm)?.decls.get(prop as CssProperty)?.value;

@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createDomflax } from './index';
+import { createDomflax } from '../src/index';
 
 let dir: string;
 let centerCss: string;

@@ -9,10 +9,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { isBrowserAvailable, verifyEquivalence } from './index.js';
-import { normalizeStyleValue, matchLeaves, diffBoxes } from './diff.js';
-import type { LeafSnapshot } from './render.js';
-import type { Viewport } from './types.js';
+import { isBrowserAvailable, verifyEquivalence } from '../src/index.js';
+import { normalizeStyleValue, matchLeaves, diffBoxes } from '../src/diff.js';
+import type { LeafSnapshot } from '../src/render.js';
+import type { Viewport } from '../src/types.js';
 
 // Probe once. Top-level await is supported in vitest ESM test modules.
 const hasBrowser = await isBrowserAvailable();

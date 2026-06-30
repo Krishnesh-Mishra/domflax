@@ -2,10 +2,10 @@ import * as path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createTransform } from './transform';
-import { parseInvocation, shouldPrompt } from './options';
-import { destinationFor, planWrites, type WritePlan } from './safety';
-import type { CliOptions } from './options';
+import { createTransform } from '../src/transform';
+import { parseInvocation, shouldPrompt } from '../src/options';
+import { destinationFor, planWrites, type WritePlan } from '../src/safety';
+import type { CliOptions } from '../src/options';
 
 /* ───────────────────────── parseInvocation ───────────────────────── */
 

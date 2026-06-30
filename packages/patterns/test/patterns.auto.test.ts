@@ -49,7 +49,7 @@ import { createCssResolver } from '@domflax/resolver-css';
 
 import { describe, expect, it } from 'vitest';
 
-import { builtinPatterns } from './_registry.generated';
+import { builtinPatterns } from '../src/_registry.generated';
 
 /* ───────────────────────── orchestration glue (mirrors domflax, sans the cycle) ───────────────────────── */
 

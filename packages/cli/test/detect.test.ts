@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { detectCssFiles, detectInputDirs } from './detect';
+import { detectCssFiles, detectInputDirs } from '../src/detect';
 
 describe('detect', () => {
   let root: string;
