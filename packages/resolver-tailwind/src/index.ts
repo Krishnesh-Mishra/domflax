@@ -4,15 +4,21 @@
  *
  * ## Engine + approach
  *
- * This resolver is backed by **tailwindcss v3** (`resolveConfig` + the JIT context + `generateRules`),
- * NOT v4. The reason is the {@link StyleResolver} contract: `resolve()` is **synchronous**. Tailwind
- * v4's entire programmatic surface (`compile`, `compileAst`, `__unstable__loadDesignSystem`) returns
- * Promises and offers no synchronous design-system constructor, so backing a synchronous resolver
- * with v4 would require blocking-on-promise hacks. Tailwind v3's `createContext(resolveConfig(...))`
- * + `generateRules(candidates, ctx)` pipeline is fully synchronous — it is exactly the path that
- * tooling such as `prettier-plugin-tailwindcss` and the Tailwind IntelliSense engine use — so it
- * backs a synchronous resolver cleanly and is genuinely testable. The task explicitly permits this
- * fallback.
+ * The {@link StyleResolver} contract is **synchronous**. For a **v3** project the resolver drives the
+ * engine directly (`createContext(resolveConfig(...))` + `generateRules(candidates, ctx)`) — the same
+ * synchronous JIT path `prettier-plugin-tailwindcss` and the Tailwind IntelliSense engine use.
+ *
+ * For a **v4** project (whose entire programmatic surface — `compile`, `__unstable__loadDesignSystem`
+ * — is async, with no synchronous design-system constructor) the resolver builds an equivalent
+ * synchronous engine from a one-time SNAPSHOT: at construction it loads the project's REAL design
+ * system in a short-lived child process (`@tailwindcss/node`'s `__unstable__loadDesignSystem`),
+ * enumerates its full class list, and captures each utility's CSS via `candidatesToCss`. That snapshot
+ * is parsed (v4's nested authoring CSS is flattened to the same node shape v3 emits — see
+ * `v4-css.ts`) into an object that satisfies the SAME internal engine interface, so everything below
+ * (extract / emit / serialize) is version-agnostic. SAFETY: if the v4 snapshot cannot be built
+ * (missing `@tailwindcss/node`, load error, timeout), the resolver falls back to reporting every class
+ * `unknown`, so files are left unchanged — never a wrong resolution. v4 arbitrary-value/variant tokens
+ * that are not in the enumerated class list are likewise reported `unknown` (⇒ preserved).
  *
  * ## Forward (`resolve`)
  *

@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import * as path from 'node:path';
 
 import type { TailwindResolverConfig } from './config';
+import { loadV4Engine } from './engine-v4';
 import type { TwContext, TwEngine, TwNode } from './types';
 
 /**
@@ -55,7 +56,11 @@ function projectRequire(projectRoot?: string): NodeRequire | null {
   return null;
 }
 
-/** The FIRST major version whose engine internals this (Tailwind v3) resolver cannot drive. */
+/**
+ * The FIRST major whose engine internals the v3 CODE PATH cannot drive. v4+ is handled by a separate
+ * adapter ({@link loadV4Engine}); only when THAT adapter also fails do we treat the major as
+ * unsupported and fall back to the safe "everything UNKNOWN ⇒ files unchanged" behavior.
+ */
 export const FIRST_UNSUPPORTED_MAJOR = 4;
 
 /** The outcome of trying to load the project's Tailwind engine. */
@@ -101,6 +106,17 @@ export function loadEngine(options: TailwindResolverConfig): LoadedEngine {
   }
   const major = majorOf(version);
   if (major !== null && major >= FIRST_UNSUPPORTED_MAJOR) {
+    // v4+: drive the project's REAL design system through the v4 adapter (a synchronous snapshot of
+    // its async API). Success ⇒ a normal, fully-resolving engine. Failure ⇒ fall back to the fail-safe
+    // (`unsupportedMajor` set ⇒ every class UNKNOWN ⇒ files left unchanged), never a wrong resolution.
+    const projectRoot = options.projectRoot ?? process.cwd();
+    let v4: TwEngine | null = null;
+    try {
+      v4 = loadV4Engine(projectRoot, version);
+    } catch {
+      v4 = null;
+    }
+    if (v4) return { engine: v4, version, unsupportedMajor: null };
     return { engine: null, version, unsupportedMajor: major };
   }
 

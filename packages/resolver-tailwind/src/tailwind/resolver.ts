@@ -66,15 +66,18 @@ class TailwindResolver implements StyleResolver {
     const seed = JSON.stringify(config.config ?? {}) + (config.configPath ?? '');
     this.fingerprint = config.fingerprint ?? `${this.provider}/${fnv1a(seed)}`;
 
-    // SAFETY (Layer 1): fail LOUDLY (once) when the project's Tailwind is a major we cannot drive.
-    // Every class then resolves to `unknown` (below), so the per-element fail-safe leaves files
-    // unchanged instead of unsafely flattening. (v4 SUPPORT itself is a separate, later task.)
+    // SAFETY (Layer 1): fail LOUDLY (once) when a v4+ project's real design system could NOT be
+    // loaded (the v4 adapter fell through — e.g. `@tailwindcss/node` is missing). Every class then
+    // resolves to `unknown` (below), so the per-element fail-safe leaves files unchanged instead of
+    // unsafely flattening. A v4 project whose design system DID load has `unsupportedMajor === null`
+    // and resolves normally — no warning.
     if (this.unsupportedMajor !== null && !warnedUnsupported.has(this.provider)) {
       warnedUnsupported.add(this.provider);
       // eslint-disable-next-line no-console
       console.warn(
-        `domflax: detected Tailwind v${this.unsupportedMajor} (${this.provider}) — not yet supported ` +
-          `by the resolver; classes cannot be resolved, so files are left unchanged to avoid unsafe edits.`,
+        `domflax: detected Tailwind v${this.unsupportedMajor} (${this.provider}) but could not load its ` +
+          `design system (is @tailwindcss/node installed?); classes cannot be resolved, so files are ` +
+          `left unchanged to avoid unsafe edits.`,
       );
     }
   }
