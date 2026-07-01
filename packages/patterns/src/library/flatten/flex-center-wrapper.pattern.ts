@@ -47,21 +47,35 @@ export const flexCenterWrapper = definePattern({
     flattenInto: 'child',
     childGains: { placeSelf: 'center' },
   },
-  // Collapsing a flex-centering wrapper to `place-self:center` on the child only stays centered when
-  // the child's NEW parent is flex/grid; moreover the wrapper's own `display:flex` establishes a
-  // formatting context. Both make this a `needs-verification` flatten, which the conservative
-  // production gate (`'provably-safe'`, used by the harness) intentionally REVERTS — so every case
-  // here is a no-match: the wrapper is preserved. Op-level rewrite correctness (purity, id-preserving
-  // unwrap, opacity-barrier safety) is still asserted by the invariant suite over every pattern.
+  // Collapsing a flex-centering wrapper to `place-self:center` on the child is render-identical ONLY
+  // when the child's NEW parent is a statically-known GRID that lets the wrapper fill its area (there
+  // `place-self`'s align-self AND justify-self both take effect). Under that ONE context the flatten is
+  // classified `provably-safe` and commits; under a flex/block/unknown parent — or when the wrapper
+  // drops any own style — it stays `needs-verification` and the conservative production gate PRESERVES
+  // it. Op-level correctness (purity, id-preserving unwrap, opacity-barrier safety) is additionally
+  // asserted by the invariant suite over every pattern.
   test: {
+    cases: [
+      {
+        name: 'grid parent → flattened (child gains place-self-center)',
+        before:
+          '<div className="grid">' +
+          '<div className="flex items-center justify-center"><span className="bg-red-200">x</span></div>' +
+          '</div>',
+        after: '<div className="grid"><span className="bg-red-200 place-self-center">x</span></div>',
+      },
+    ],
     noMatch: [
-      // Even under a static flex/grid parent the centering flatten is not provably layout-neutral
-      // (the wrapper itself establishes a flex formatting context) → left unchanged.
+      // Non-grid (flex) parent (document root): `justify-self` is ignored in flex → not provably safe.
+      '<div className="flex justify-center items-center"><div className="bg-red-200">Hello</div></div>',
+      // Grid parent, but the wrapper drops padding when removed → not layout-neutral (rule 3).
       '<div className="grid">' +
+        '<div className="p-4 flex items-center justify-center"><span className="bg-red-200">x</span></div>' +
+        '</div>',
+      // Grid parent forcing place-items-center: the wrapper would not fill its area → fill guard skips.
+      '<div className="grid place-items-center">' +
         '<div className="flex items-center justify-center"><span className="bg-red-200">x</span></div>' +
         '</div>',
-      // Non-flex/grid parent (document root): place-self centering would not hold → left unchanged.
-      '<div className="flex justify-center items-center"><div className="bg-red-200">Hello</div></div>',
       // onClick is a hard opacity barrier → the wrapper is load-bearing regardless of the gate.
       '<div className="flex justify-center items-center" onClick={handleClick}>' +
         '<div className="bg-red-200">Hello</div>' +
