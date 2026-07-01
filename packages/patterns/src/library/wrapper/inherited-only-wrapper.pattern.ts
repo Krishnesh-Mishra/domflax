@@ -17,7 +17,29 @@
  * the `where` predicate restricts the match to wrappers whose entire own style is inheritable.
  */
 
-import { definePattern, normalizer, type Matcher } from '@domflax/pattern-kit';
+import type { DeepReadonly, IRElement, IRNode } from '@domflax/core';
+
+import { definePattern, normalizer, not, type Matcher } from '@domflax/pattern-kit';
+
+/**
+ * The wrapper is an inert host element — a `<div>` (block) or `<span>` (inline) — whose user-agent
+ * default display/box is layout-neutral. Removing such a box is provably safe; removing a UA-significant
+ * element instead (`<li>`/`<p>`/`<td>`/…, whose default display or margins are NOT captured in the
+ * class-derived computed style) or a component is NOT, so those are excluded. This mirrors the tag guard
+ * every other safe wrapper pattern (passthrough/empty-style-div/redundant-inline) relies on.
+ */
+const INERT_HOST_TAGS: ReadonlySet<string> = new Set(['div', 'span']);
+const isInertHostTag: Matcher = (node) => {
+  const n = node as DeepReadonly<IRNode>;
+  if (n.kind !== 'element') return false;
+  return INERT_HOST_TAGS.has(String((n as DeepReadonly<IRElement>).tag).toLowerCase());
+};
+
+/** Component identity is a hard opacity barrier — never fold-and-remove a component wrapper. */
+const isComponentNode: Matcher = (node) => {
+  const n = node as DeepReadonly<IRNode>;
+  return n.kind === 'element' ? (n as DeepReadonly<IRElement>).meta.isComponent : false;
+};
 
 /**
  * The wrapper carries at least one own declaration and EVERY own declaration is an inherited property
@@ -61,7 +83,7 @@ export const inheritedOnlyWrapper = definePattern({
   match: {
     onlyChild: 'element',
     paintsNothing: true,
-    where: hasOnlyInheritedStyle,
+    where: [isInertHostTag, not(isComponentNode), hasOnlyInheritedStyle],
   },
   rewrite: { flattenInto: 'child' },
   test: {
@@ -76,6 +98,9 @@ export const inheritedOnlyWrapper = definePattern({
       // `p-4` is a NON-inherited padding: removing the box would drop it, so the flatten-safety gate
       // reverts the unwrap and the wrapper is left unchanged.
       '<div className="p-4"><p className="bg-red-200">x</p></div>',
+      // A `<p>` wrapper is NOT an inert host box: its UA default display/margins are not captured in the
+      // class-derived computed style, so removing it is not provably layout-neutral → left unchanged.
+      '<p className="text-center"><span className="bg-red-200">x</span></p>',
     ],
   },
 });
