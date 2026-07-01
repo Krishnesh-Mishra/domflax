@@ -249,3 +249,36 @@ is necessary but not sufficient; what users install is the dist. This is now a s
 The project ships under the **Domflax Software License (DSL-1.0)** (FSL-style: source-available, time
 -delayed conversion to Apache-2.0), with a **Runtime Exception** placing `domflax/runtime`,
 `domflax/cli`, and the pattern library under MIT (they embed into user bundles). See [LICENSE](../LICENSE).
+
+## I. HTML frontend/backend (parse5)
+
+### Q24. How does the `.html`/`.htm` frontend optimize HTML without reformatting the document?
+**Decision:** A dedicated `@domflax/frontend-html` frontend/backend pair that reuses the exact same
+IR / passes / resolver / safety machinery as the JSX path — only the parser differs (**parse5**
+instead of Babel). It does the same job the JSX frontend does, via **source-span surgical edits**, so
+untouched bytes are preserved **byte-for-byte**.
+
+- **Parse (parse5 → IR).** `parse5.parse(code, { sourceCodeLocationInfo: true })`, then a tree walk
+  lowers each element → `IRElement` (tag + non-`class` attributes; the `class` attribute is resolved
+  through `ctx.resolver` + `ctx.normalizer` onto `computed` so patterns match on resolved style),
+  text → `IRText`, comments → `IRComment`. Doctype and the auto-inserted `<html>/<head>/<body>`
+  wrappers are **preserved verbatim** (doctype is never represented; synthetic wrappers become
+  opaque). Precise **source spans** (element span, open-/close-tag spans, and the `class` VALUE span
+  incl. quotes) are recorded in the `BackrefTable` — the parse5 attr location tolerates both the v6
+  (top-level `attrs`) and v7 (`startTag.attrs`) layouts.
+- **Print (surgical, never re-serialize).** A `magic-string` is built over the ORIGINAL source; the
+  backend only edits changed spans — overwrite a `class` VALUE span to rewrite tokens in place, and
+  unwrap a flattened wrapper by deleting **just** its open- and close-tag spans (children survive
+  verbatim). Re-serializing the parse5 tree is deliberately avoided (it would normalize
+  quoting/whitespace/attribute order across the whole file).
+- **Opaque set (never flatten/rewrite),** enforced with `meta.safetyFloor = 0` (the applier refuses
+  every op above lint): elements with an `id` (JS `querySelector`/anchor hook), any inline `on*=`
+  handler, or `contenteditable` (element only); and the `<script>/<style>/<template>/<svg>/<pre>/
+  <textarea>` subtrees (not descended into). Non-`class` attributes land in the `AttrMap`, so the
+  existing flatten `hasOwnAttrs` guard already refuses to unwrap an `id`/`data-*` wrapper.
+- **Lazy parse5.** `Frontend.parse` is synchronous, so parse5 is loaded via `createRequire(import.
+  meta.url)('parse5')` INSIDE `parse()` (not a top-level import) — the JSX-only path never pulls
+  parse5 into memory. parse5 v7 ships a CJS build under its `require` export, so the require resolves
+  cleanly in both the ESM and CJS outputs (and when bundled into `domflax`).
+- **Same conservative safety.** The `'provably-safe'` gate and the flatten classifier are unchanged;
+  centering/flex wrappers stay preserved (context-aware centering is a separate future task).

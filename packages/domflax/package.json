@@ -78,13 +78,15 @@
     "@babel/parser": "^7.26.0",
     "@babel/traverse": "^7.26.0",
     "@babel/types": "^7.26.0",
-    "magic-string": "^0.30.21"
+    "magic-string": "^0.30.21",
+    "parse5": "^7.3.0"
   },
   "devDependencies": {
     "@domflax/core": "*",
     "@domflax/patterns": "*",
     "@domflax/pattern-kit": "*",
     "@domflax/frontend-jsx": "*",
+    "@domflax/frontend-html": "*",
     "@domflax/resolver-tailwind": "*",
     "@domflax/resolver-css": "*",
     "@domflax/verify": "*",

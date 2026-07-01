@@ -7,7 +7,8 @@
  * mirrors domflax's own:  parse (JSX→IR, resolving each element's static classes through the chosen
  * resolver) → runPasses(builtinPatterns) → reverse-emit computed styles back to class tokens → print.
  *
- * Non-jsx/tsx files (including `.html`, which has no wired frontend yet) pass through unchanged.
+ * `.jsx`/`.tsx` route to `@domflax/frontend-jsx` (Babel); `.html`/`.htm` route to
+ * `@domflax/frontend-html` (parse5). Every other file passes through unchanged.
  */
 
 import {
@@ -28,6 +29,7 @@ import type {
   SafetyLevel,
   StyleResolver,
 } from '@domflax/core';
+import { createHtmlBackend, createHtmlFrontend } from '@domflax/frontend-html';
 import { createJsxBackend, createJsxFrontend } from '@domflax/frontend-jsx';
 import { normalizer } from '@domflax/pattern-kit';
 import { builtinPatterns } from '@domflax/patterns';
@@ -121,6 +123,13 @@ function jsxKindOf(id: string): FileKind | null {
   return null;
 }
 
+/** `.html`/`.htm` ⇒ `'html'`; anything else ⇒ null (no HTML frontend). */
+function htmlKindOf(id: string): FileKind | null {
+  const lower = (id.split('?', 1)[0] ?? id).toLowerCase();
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
+  return null;
+}
+
 /** Rough class-token count for the `--report` summary (provider-independent, string-level). */
 function countClassTokens(code: string): number {
   let total = 0;
@@ -201,10 +210,44 @@ export function createTransform(options: CliOptions): Transform {
     return { doc, ctx, passes: buildPasses(patterns), nodesIn };
   }
 
+  /**
+   * PARSE (HTML → IR, classes onto `computed`) for `.html`/`.htm`. The HTML frontend sets per-node
+   * safety floors itself (opaque nodes → 0), so — unlike the JSX prepare — we must NOT blanket-open
+   * every node to floor 3.
+   */
+  function prepareHtml(code: string, id: string, gate: FlattenGate): PreparedFile {
+    const parsed = createHtmlFrontend().parse(code, {
+      id,
+      kind: 'html',
+      resolver,
+      normalizer,
+      config: {},
+      onDiagnostic: () => {},
+    });
+    const doc = parsed.doc;
+    const nodesIn = doc.nodes.size;
+    const ctx: ApplyContext = {
+      doc,
+      safetyCeiling: options.safety as SafetyLevel,
+      normalizer,
+      selectors: buildSelectorIndex(doc, resolver),
+      resolver,
+      gate,
+    };
+    return { doc, ctx, passes: buildPasses(patterns), nodesIn };
+  }
+
   /** REVERSE-EMIT + PRINT the optimized doc, then assemble the per-file result + stats. */
-  function finish(code: string, optimized: IRDocument, id: string, nodesIn: number): FileResult {
+  function finish(
+    code: string,
+    optimized: IRDocument,
+    id: string,
+    nodesIn: number,
+    backend: 'jsx' | 'html' = 'jsx',
+  ): FileResult {
     syncClassesFromComputed(optimized, resolver, normalizer);
-    const printed = createJsxBackend().print(
+    const print = backend === 'html' ? createHtmlBackend().print : createJsxBackend().print;
+    const printed = print(
       optimized,
       { moduleId: id, ops: [], provenance: new Map() },
       { normalizer, resolver, sink: createSyntheticSink(), eol: '\n', onDiagnostic: () => {} },
@@ -235,10 +278,17 @@ export function createTransform(options: CliOptions): Transform {
     resolver,
     transformFile(code: string, id: string): FileResult {
       const kind = jsxKindOf(id);
-      if (kind === null) return passthroughResult(code);
-      const { doc, ctx, passes, nodesIn } = prepare(code, id, kind, 'provably-safe');
-      const { doc: optimized } = runPasses(doc, passes, ctx);
-      return finish(code, optimized, id, nodesIn);
+      if (kind !== null) {
+        const { doc, ctx, passes, nodesIn } = prepare(code, id, kind, 'provably-safe');
+        const { doc: optimized } = runPasses(doc, passes, ctx);
+        return finish(code, optimized, id, nodesIn);
+      }
+      if (htmlKindOf(id) !== null) {
+        const { doc, ctx, passes, nodesIn } = prepareHtml(code, id, 'provably-safe');
+        const { doc: optimized } = runPasses(doc, passes, ctx);
+        return finish(code, optimized, id, nodesIn, 'html');
+      }
+      return passthroughResult(code);
     },
   };
 }

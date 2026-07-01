@@ -24,6 +24,7 @@ import type {
   SafetyLevel,
   StyleResolver,
 } from '@domflax/core';
+import { createHtmlBackend, createHtmlFrontend } from '@domflax/frontend-html';
 import { createJsxBackend, createJsxFrontend } from '@domflax/frontend-jsx';
 import { normalizer } from '@domflax/pattern-kit';
 
@@ -32,6 +33,13 @@ export function jsxKindOf(id: string): FileKind | null {
   const clean = id.split('?', 1)[0] ?? id;
   if (clean.endsWith('.tsx')) return 'tsx';
   if (clean.endsWith('.jsx')) return 'jsx';
+  return null;
+}
+
+/** `.html`/`.htm` ⇒ `'html'`; anything else ⇒ null (no HTML frontend). */
+export function htmlKindOf(id: string): FileKind | null {
+  const clean = (id.split('?', 1)[0] ?? id).toLowerCase();
+  if (clean.endsWith('.html') || clean.endsWith('.htm')) return 'html';
   return null;
 }
 
@@ -134,4 +142,69 @@ export function runJsxPipeline(
   const { doc, ctx, passes } = preparePipeline(code, id, kind, resolver, patterns, safety, 'provably-safe');
   const { doc: optimized } = runPasses(doc, passes, ctx);
   return finishPipeline(optimized, id, resolver);
+}
+
+/* ───────────────────────── HTML pipeline (parse5 frontend/backend) ───────────────────────── */
+
+/**
+ * PARSE (HTML → IR, resolving classes onto `computed`) + AUTHORIZE + build the apply context. Unlike
+ * the JSX path, the HTML frontend sets per-node `safetyFloor` itself (opaque nodes → 0), so we must
+ * NOT blanket-open every node to 3 (that would strip the opacity floors).
+ */
+function prepareHtml(
+  code: string,
+  id: string,
+  resolver: StyleResolver,
+  patterns: readonly Pattern[],
+  safety: SafetyLevel,
+  gate: FlattenGate,
+): PreparedRun {
+  const parsed = createHtmlFrontend().parse(code, {
+    id,
+    kind: 'html',
+    resolver,
+    normalizer,
+    config: {},
+    onDiagnostic: () => {},
+  });
+  const doc = parsed.doc;
+  const ctx: ApplyContext = {
+    doc,
+    safetyCeiling: safety,
+    normalizer,
+    selectors: buildSelectorIndex(doc, resolver),
+    resolver,
+    gate,
+  };
+  return { doc, ctx, passes: buildPasses(patterns) };
+}
+
+/** REVERSE-EMIT optimized computed styles back into class tokens, then PRINT IR → HTML text. */
+function finishHtmlPipeline(optimized: IRDocument, id: string, resolver: StyleResolver): string {
+  syncClassesFromComputed(optimized, resolver, normalizer);
+  const printed = createHtmlBackend().print(
+    optimized,
+    { moduleId: id, ops: [], provenance: new Map() },
+    {
+      normalizer,
+      resolver,
+      sink: createSyntheticSink(),
+      eol: eolOf(optimized),
+      onDiagnostic: () => {},
+    },
+  );
+  return printed.code;
+}
+
+/** SYNC full HTML pipeline (gate `'provably-safe'` — surgical span edits over verbatim source). */
+export function runHtmlPipeline(
+  code: string,
+  id: string,
+  resolver: StyleResolver,
+  patterns: readonly Pattern[],
+  safety: SafetyLevel,
+): string {
+  const { doc, ctx, passes } = prepareHtml(code, id, resolver, patterns, safety, 'provably-safe');
+  const { doc: optimized } = runPasses(doc, passes, ctx);
+  return finishHtmlPipeline(optimized, id, resolver);
 }

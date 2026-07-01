@@ -93,6 +93,43 @@ describe('createDomflax().transform — verify off (default) is conservative', (
   });
 });
 
+/* ───────────────────────── HTML frontend (.html routes to parse5) ───────────────────────── */
+
+describe('createDomflax().transform — .html files route through the parse5 frontend', () => {
+  it('compresses px-4 py-4 → p-4 in an HTML class attribute', () => {
+    const { code: out } = createDomflax().transform('<div class="px-4 py-4">x</div>', 'index.html');
+    expect(out).toBe('<div class="p-4">x</div>');
+  });
+
+  it('applies the provably-safe display:contents flatten in HTML', () => {
+    const { code: out } = createDomflax().transform(
+      '<div class="contents"><a class="text-blue-500">L</a></div>',
+      'index.html',
+    );
+    expect(out).toBe('<a class="text-blue-500">L</a>');
+  });
+
+  it('returns an HTML doc with no optimizable content byte-for-byte (doctype/comment/script preserved)', () => {
+    const src =
+      `<!DOCTYPE html>\n<!-- keep -->\n<body>\n  <p>hi</p>\n  <script>var a = 1 < 2;</script>\n</body>\n`;
+    const { code: out } = createDomflax().transform(src, 'page.html');
+    expect(out).toBe(src);
+  });
+
+  it('never rewrites an id / inline-handler / <script> (opaque), but compresses a plain sibling', () => {
+    const src =
+      `<div id="keep" class="px-4 py-4">a</div>` +
+      `<div onclick="go()" class="px-4 py-4">b</div>` +
+      `<span class="px-4 py-4">c</span>`;
+    const { code: out } = createDomflax().transform(src, 'index.htm');
+    expect(out).toBe(
+      `<div id="keep" class="px-4 py-4">a</div>` +
+        `<div onclick="go()" class="px-4 py-4">b</div>` +
+        `<span class="p-4">c</span>`,
+    );
+  });
+});
+
 /* ───────────────────────── REAL-MODULE round-trip (the regression that hid the bug) ───────────────────────── */
 
 describe('createDomflax().transform — full modules survive surgery (verify off)', () => {

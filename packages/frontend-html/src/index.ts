@@ -1,21 +1,15 @@
 /**
- * @domflax/frontend-html — parse5 HTML <-> IR frontend + backend (TYPED STUB).
+ * @domflax/frontend-html — parse5 HTML <-> IR frontend + backend.
  *
- * Role: a {@link Frontend} that parses HTML source into an {@link IRDocument}, and a matching
- * {@link Backend} that prints an edited IR document back to HTML with surgical, span-based edits.
+ * A {@link Frontend} that parses HTML into an {@link IRDocument} (parse5 tree → IR, resolving each
+ * element's `class` attribute onto `computed`), and a matching {@link Backend} that prints the edited
+ * document back to HTML with SURGICAL, span-based edits over the original source (never re-serializing
+ * the parse5 tree). Untouched bytes — doctype, comments, whitespace, scripts, attribute order — stay
+ * byte-for-byte identical.
  *
- * This is a Stage-N stub: the public surface (names, langs, signatures) is final and typechecks
- * against the @domflax/core contract under strict + verbatimModuleSyntax, but the heavy lifting —
- * the parse5 tree walk into IR and the reverse codegen — throws `NotImplemented`. Trivial bits
- * (capability predicates, honest passthroughs) are implemented for real.
- *
- * FUTURE DEP: parse5 (HTML5-spec tree construction + serialization). Intentionally NOT in
- * package.json yet — stubs must not pull heavy third-party libs. The real implementation will:
- *   - frontend: parse5.parse(code) → walk the parse5 tree → IRElement/IRText/IRComment nodes,
- *     resolve class/inline-style via ctx.resolver/ctx.normalizer, populate the BackrefTable from
- *     parse5 location info (sourceCodeLocationInfo: true).
- *   - backend: apply the EditPlan's RewriteOps as TextEdits against retained verbatim source,
- *     falling back to parse5 serialization for synthetic subtrees.
+ * parse5 is a real dependency but is LAZILY required inside `parse()` (see `./parse`), so the JSX-only
+ * path never loads it. The parse walk + opacity/span helpers live in `./walk` + `./parse`; the reverse
+ * codegen in `./backend`. This module is the public assembly point.
  */
 
 import type {
@@ -23,51 +17,47 @@ import type {
   BackendContext,
   CodegenResult,
   EditPlan,
-  FileKind,
   Frontend,
   FrontendParseContext,
   IRDocument,
   ParseResult,
 } from '@domflax/core';
 
-/** File kinds this frontend/backend handles. */
-const HTML_LANGS: readonly FileKind[] = ['html'];
+import { doPrint } from './backend';
+import { doParse } from './parse';
+import { HTML_LANGS, looksLikeHtml } from './walk';
 
-/** Lightweight heuristic: does this source id / code look like HTML we can own? */
-function looksLikeHtml(id: string, code: string): boolean {
-  if (/\.html?$/i.test(id)) return true;
-  // <!doctype html> or a leading tag-open are strong HTML signals.
-  const head = code.slice(0, 256).trimStart().toLowerCase();
-  return head.startsWith('<!doctype html') || head.startsWith('<html') || head.startsWith('<');
-}
+export { HTML_LANGS, looksLikeHtml } from './walk';
 
-/**
- * HTML frontend: parse5 HTML → IR. STUB — `parse` throws NotImplemented; `canParse` is real.
- */
+/** HTML frontend: parse5 HTML → IR (with source spans for surgical codegen). */
 export const htmlFrontend: Frontend = {
   name: 'html',
   langs: HTML_LANGS,
-
   canParse(id: string, code: string): boolean {
     return looksLikeHtml(id, code);
   },
-
-  parse(_code: string, _ctx: FrontendParseContext): ParseResult {
-    throw new Error('NotImplemented: parse5 HTML→IR parsing lands in Stage N (frontend-html)');
+  parse(code: string, ctx: FrontendParseContext): ParseResult {
+    return doParse(code, ctx);
   },
 };
 
-/**
- * HTML backend: IR → HTML via span-based surgical edits (+ parse5 serialization for synthetic
- * subtrees). STUB — `print` throws NotImplemented; `name`/`langs` are real.
- */
+/** Factory mirror — returns a fresh handle to the (stateless) HTML frontend. */
+export function createHtmlFrontend(): Frontend {
+  return htmlFrontend;
+}
+
+/** HTML backend: IR → HTML via span-based surgical edits over the retained verbatim source. */
 export const htmlBackend: Backend = {
   name: 'html',
   langs: HTML_LANGS,
-
-  print(_doc: IRDocument, _plan: EditPlan, _ctx: BackendContext): CodegenResult {
-    throw new Error('NotImplemented: IR→HTML codegen lands in Stage N (frontend-html)');
+  print(doc: IRDocument, _plan: EditPlan, _ctx: BackendContext): CodegenResult {
+    return { code: doPrint(doc), map: null, edits: [], diagnostics: [] };
   },
 };
+
+/** Factory mirror — returns a fresh handle to the (stateless) HTML backend. */
+export function createHtmlBackend(): Backend {
+  return htmlBackend;
+}
 
 export default htmlFrontend;

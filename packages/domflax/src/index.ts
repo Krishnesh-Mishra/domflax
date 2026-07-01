@@ -5,13 +5,12 @@
  * `@domflax/patterns` library, then layers thin, framework-agnostic build adapters on top
  * (`vite()` / `webpack()`) plus a programmatic `createDomflax()` factory.
  *
- * Each adapter runs the SAME single-file engine as {@link createDomflax} (JSX/TSX frontend + lazy
- * Tailwind/CSS resolver → core pass manager → reverse-emit → JSX backend). The adapters are
+ * Each adapter runs the SAME single-file engine as {@link createDomflax} (JSX/TSX + HTML frontends +
+ * lazy Tailwind/CSS resolver → core pass manager → reverse-emit → surgical backend). The adapters are
  * structurally typed against their bundlers — they never hard-depend on `vite` or `webpack`.
  *
- * Future deps (intentionally NOT imported yet — they land in a later stage):
- *   - `@domflax/frontend-html` — HTML / Astro-static frontend feeding the pipeline.
- *   - `@domflax/backend-*`     — additional surgical codegen backends.
+ * `.jsx`/`.tsx` route to `@domflax/frontend-jsx` (Babel); `.html`/`.htm` route to
+ * `@domflax/frontend-html` (parse5). Both emit via SURGICAL span edits over the original source.
  */
 
 import { createPipeline } from '@domflax/core';
@@ -28,7 +27,7 @@ import { createCssResolver } from '@domflax/resolver-css';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { jsxKindOf, runJsxPipeline } from './pipeline-run';
+import { htmlKindOf, jsxKindOf, runHtmlPipeline, runJsxPipeline } from './pipeline-run';
 
 // ── Re-export the public surface ──────────────────────────────────────────────────────────────
 export * from '@domflax/core';
@@ -64,7 +63,7 @@ export interface ResolvedDomflaxOptions {
   readonly include: readonly string[];
 }
 
-const DEFAULT_INCLUDE: readonly string[] = ['.jsx', '.tsx', '.html'];
+const DEFAULT_INCLUDE: readonly string[] = ['.jsx', '.tsx', '.html', '.htm'];
 
 function resolveOptions(options: DomflaxOptions): ResolvedDomflaxOptions {
   return {
@@ -154,10 +153,16 @@ export function createDomflax(options: DomflaxOptions = {}): Domflax {
     transform(code: string, id: string): DomflaxTransformResult {
       if (!isSupported(id, resolved.include)) return { code, map: null };
       const kind = jsxKindOf(id);
-      // Non-jsx/tsx supported files (e.g. .html) stay passthrough — no HTML frontend wired yet.
-      if (kind === null) return { code, map: null };
-      const out = runJsxPipeline(code, id, kind, getResolver(), patterns, resolved.safety);
-      return { code: out, map: null };
+      if (kind !== null) {
+        const out = runJsxPipeline(code, id, kind, getResolver(), patterns, resolved.safety);
+        return { code: out, map: null };
+      }
+      // `.html`/`.htm` route to the parse5 HTML frontend/backend (surgical span edits).
+      if (htmlKindOf(id) !== null) {
+        const out = runHtmlPipeline(code, id, getResolver(), patterns, resolved.safety);
+        return { code: out, map: null };
+      }
+      return { code, map: null };
     },
   };
 }

@@ -147,6 +147,32 @@ const check = (label, cond) => {
   check('no place-self-center pushed through barrier', !out.includes('place-self-center'));
 }
 
+// 2b) HTML frontend (parse5) — the built dist transforms a `.html` string: it COMPRESSES a class in
+//     place (px-4 py-4 → p-4), applies the provably-safe display:contents flatten, and preserves an
+//     opaque (`id`) element + a `<script>` byte-for-byte. Exercises the bundled parse5 lazy-require.
+{
+  const compressed = createDomflax().transform('<div class="px-4 py-4">x</div>', 'index.html').code;
+  console.log('  [html compress] out:', compressed);
+  check('HTML: px-4 py-4 compressed to p-4 in built dist', compressed === '<div class="p-4">x</div>');
+
+  const flattened = createDomflax().transform(
+    '<div class="contents"><a class="text-blue-500">L</a></div>',
+    'index.html',
+  ).code;
+  console.log('  [html flatten] out:', flattened);
+  check('HTML: display:contents wrapper flattened in built dist', flattened === '<a class="text-blue-500">L</a>');
+
+  const opaqueSrc =
+    '<div id="keep" class="px-4 py-4">a</div><script>var s = "px-4 py-4";</script><span class="px-4 py-4">b</span>';
+  const opaqueOut = createDomflax().transform(opaqueSrc, 'page.html').code;
+  console.log('  [html opaque] out:', opaqueOut);
+  check(
+    'HTML: id + <script> preserved, plain sibling compressed',
+    opaqueOut ===
+      '<div id="keep" class="px-4 py-4">a</div><script>var s = "px-4 py-4";</script><span class="p-4">b</span>',
+  );
+}
+
 // 3) The Tailwind engine actually loaded from the project (not the silent fallback).
 {
   const provider = createDomflax().resolver.provider;

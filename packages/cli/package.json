@@ -25,6 +25,7 @@
   "dependencies": {
     "@domflax/core": "*",
     "@domflax/frontend-jsx": "*",
+    "@domflax/frontend-html": "*",
     "@domflax/pattern-kit": "*",
     "@domflax/patterns": "*",
     "@domflax/resolver-css": "*",
