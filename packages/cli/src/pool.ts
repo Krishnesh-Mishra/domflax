@@ -173,6 +173,8 @@ export interface PoolOutcome {
   readonly failures: number;
   /** Absolute destination paths written, for a deterministic (sorted) post-run listing. */
   readonly wrote: readonly string[];
+  /** Per changed+written file: its destination + stats, for `--details`. */
+  readonly changedFiles: readonly { readonly dest: string; readonly stats: FileStats }[];
   /** Per-file error messages (path + reason), for reporting. */
   readonly errors: readonly { readonly path: string; readonly error: string }[];
 }
@@ -199,6 +201,7 @@ export function runPool(
   const workerPath = resolveWorkerPath();
   const totals = emptyTotals();
   const wrote: string[] = [];
+  const changedFiles: { dest: string; stats: FileStats }[] = [];
   const errors: { path: string; error: string }[] = [];
   let failures = 0;
 
@@ -229,7 +232,7 @@ export function runPool(
         }
       }
       handles.clear();
-      resolve({ totals, failures, wrote, errors });
+      resolve({ totals, failures, wrote, changedFiles, errors });
     };
 
     const recordFailure = (file: string, error: string): void => {
@@ -278,6 +281,7 @@ export function runPool(
         addStats(totals, msg.stats, msg.changed);
         if (msg.wrote) {
           wrote.push(msg.wrote);
+          changedFiles.push({ dest: msg.wrote, stats: msg.stats });
           onWrote?.(msg.wrote);
         }
       } else {

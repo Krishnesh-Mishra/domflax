@@ -27,6 +27,8 @@ export interface CliOptions {
   readonly dryRun: boolean;
   /** Print a summary (files, nodes removed, classes saved, bytes saved). */
   readonly report: boolean;
+  /** Print PER-FILE optimization stats (nodes/classes/bytes for every changed file). */
+  readonly details: boolean;
   /** Permit overwriting source in place (still gated on a clean git tree). */
   readonly dangerouslyOverwriteSource: boolean;
   /** Skip the clean-git-tree gate guarding `--dangerously-overwrite-source`. */
@@ -88,6 +90,7 @@ export function parseInvocation(argv: readonly string[]): CliOptions {
       css: { type: 'string', multiple: true },
       'dry-run': { type: 'boolean', default: false },
       report: { type: 'boolean', default: false },
+      details: { type: 'boolean', default: false },
       'dangerously-overwrite-source': { type: 'boolean', default: false },
       'no-git-check': { type: 'boolean', default: false },
       'no-interactive': { type: 'boolean', default: false },
@@ -111,6 +114,7 @@ export function parseInvocation(argv: readonly string[]): CliOptions {
     css: values.css ?? [],
     dryRun: values['dry-run'] === true,
     report: values.report === true,
+    details: values.details === true,
     dangerouslyOverwriteSource: values['dangerously-overwrite-source'] === true,
     noGitCheck: values['no-git-check'] === true,
     interactive: values['no-interactive'] !== true && values.yes !== true,
@@ -130,7 +134,7 @@ export function shouldPrompt(options: CliOptions, isTty: boolean): boolean {
 export const USAGE: string = [
   'Usage: domflax [paths...] [options]',
   '',
-  'Optimizes .jsx/.tsx files (flatten redundant wrappers + compress class sets).',
+  'Optimizes .jsx/.tsx/.html files (flatten redundant wrappers + compress class sets).',
   'Source is READ-ONLY by default — output goes to --out or ./domflax-out.',
   '',
   'Arguments:',
@@ -142,6 +146,7 @@ export const USAGE: string = [
   '  --css <file...>                stylesheets feeding the custom-CSS provider',
   '  --dry-run                      print per-file diffs; write nothing',
   '  --report                       print a summary of what changed',
+  '  --details                      print per-file optimization stats (nodes/classes/bytes)',
   '  --dangerously-overwrite-source overwrite source in place (needs a clean git tree)',
   '  --no-git-check                 skip the clean-git-tree gate',
   '  --safety <0|1|2|3>             optimization aggressiveness (default: 2)',

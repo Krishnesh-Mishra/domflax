@@ -17,6 +17,7 @@ import type { Totals } from './pool';
 import { destinationFor, isGitClean, planWrites } from './safety';
 import type { WritePlan } from './safety';
 import { createTransform } from './transform';
+import type { FileStats } from './transform';
 import { discoverInputs } from './walk';
 import { unifiedDiff } from './diff';
 import { runWizard, WIZARD_CANCELLED } from './wizard';
@@ -34,6 +35,11 @@ export { unifiedDiff } from './diff';
 /** Outcome of a {@link run}: the process exit code. */
 export interface RunResult {
   readonly exitCode: number;
+}
+
+/** The `--details` per-file suffix: "N nodes, M classes, B bytes". */
+function fileDetail(stats: FileStats): string {
+  return `${stats.nodesRemoved} nodes, ${stats.classesSaved} classes, ${stats.bytesSaved} bytes`;
 }
 
 function printReport(totals: Totals): void {
@@ -76,8 +82,13 @@ function runInline(
 
     if (options.dryRun) {
       const rel = path.relative(inputRoot, file) || path.basename(file);
-      if (result.changed) console.log(unifiedDiff(code, result.code, rel));
-      else if (!options.report) console.log(`  (unchanged) ${rel}`);
+      if (result.changed) {
+        console.log(
+          options.details ? `domflax: ${rel} — ${fileDetail(result.stats)}` : unifiedDiff(code, result.code, rel),
+        );
+      } else if (!options.report && !options.details) {
+        console.log(`  (unchanged) ${rel}`);
+      }
       continue;
     }
 
@@ -92,7 +103,8 @@ function runInline(
     try {
       mkdirSync(path.dirname(target.value), { recursive: true });
       writeFileSync(target.value, result.code, 'utf8');
-      console.log(`domflax: wrote ${path.relative(process.cwd(), target.value) || target.value}`);
+      const rel = path.relative(process.cwd(), target.value) || target.value;
+      console.log(options.details ? `domflax: wrote ${rel} — ${fileDetail(result.stats)}` : `domflax: wrote ${rel}`);
     } catch (err) {
       console.error(`domflax: cannot write ${target.value}: ${String((err as Error)?.message ?? err)}`);
       failures += 1;
@@ -146,8 +158,14 @@ export async function execute(options: CliOptions): Promise<RunResult> {
     for (const { path: p, error } of outcome.errors) {
       console.error(`domflax: failed ${path.relative(process.cwd(), p) || p}: ${error}`);
     }
-    for (const dest of [...outcome.wrote].sort()) {
-      console.log(`domflax: wrote ${path.relative(process.cwd(), dest) || dest}`);
+    if (options.details) {
+      for (const { dest, stats } of [...outcome.changedFiles].sort((a, b) => a.dest.localeCompare(b.dest))) {
+        console.log(`domflax: wrote ${path.relative(process.cwd(), dest) || dest} — ${fileDetail(stats)}`);
+      }
+    } else {
+      for (const dest of [...outcome.wrote].sort()) {
+        console.log(`domflax: wrote ${path.relative(process.cwd(), dest) || dest}`);
+      }
     }
   } else {
     failures += runInline(files, options, inputRoot, plan, totals);
