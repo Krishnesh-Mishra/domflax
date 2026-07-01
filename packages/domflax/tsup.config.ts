@@ -6,6 +6,8 @@ export default defineConfig({
     'pattern-kit': 'src/pattern-kit.ts',
     verify: 'src/verify.ts',
     cli: 'src/cli.ts',
+    // Worker-pool entry — must sit next to `cli.cjs` in dist so the pool can load it by relative path.
+    worker: 'src/worker.ts',
     // Bundled webpack loader — webpack requires it by absolute path (see `webpack()` in src/index.ts).
     'webpack-loader': 'src/webpack-loader.ts',
   },

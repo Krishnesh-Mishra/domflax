@@ -272,6 +272,98 @@ const check = (label, cond) => {
   check('cli.cjs does not require @domflax/verify', !/@domflax\/verify/.test(cliSrc));
 }
 
+// 10) FEATURE A — per-file HTML CSS, through the BUILT CLI bin. A page that links its OWN stylesheet
+//     resolves against it (not just the global --css): a `.pad` wrapper the local sheet marks
+//     load-bearing (padding) is PRESERVED, while an unknown (remote-linked) one would be flattened.
+{
+  const { spawnSync } = await import('node:child_process');
+  const { readFileSync, existsSync } = await import('node:fs');
+  const cliBin = path.join(here, '..', 'packages', 'domflax', 'dist', 'cli.cjs');
+  const tmp = mkdtempSync(path.join(tmpdir(), 'domflax-smoke-html-'));
+  try {
+    writeFileSync(path.join(tmp, 'local.css'), '.pad{padding:1rem}\n');
+    writeFileSync(
+      path.join(tmp, 'page.html'),
+      '<!doctype html><html><head><link rel="stylesheet" href="./local.css"></head>' +
+        '<body><div class="pad"><a class="link">L</a></div></body></html>',
+    );
+    // A control page that links the SAME class name remotely (must be ignored → wrapper flattened).
+    writeFileSync(
+      path.join(tmp, 'remote.html'),
+      '<!doctype html><html><head><link rel="stylesheet" href="https://cdn.example.com/local.css"></head>' +
+        '<body><div class="pad"><a class="link">L</a></div></body></html>',
+    );
+    const out = path.join(tmp, '__out');
+    const res = spawnSync(process.execPath, [cliBin, tmp, '--out', out, '--provider', 'custom', '--yes'], {
+      encoding: 'utf8',
+    });
+    check('FEATURE A: built CLI ran on an HTML dir (exit 0)', res.status === 0);
+    // The local page's wrapper is PRESERVED → the file is UNCHANGED, so the CLI (correctly) does not
+    // copy it to --out. Preserved ⇒ absent-from-out OR (if present) still carrying class="pad".
+    const localPath = path.join(out, 'page.html');
+    const localPreserved = !existsSync(localPath) || readFileSync(localPath, 'utf8').includes('class="pad"');
+    // The remote page's `.pad` is UNKNOWN (remote sheet ignored) → styleless wrapper → flattened, so it
+    // IS written and no longer carries the wrapper class.
+    const remotePath = path.join(out, 'remote.html');
+    const remoteOut = existsSync(remotePath) ? readFileSync(remotePath, 'utf8') : '';
+    console.log('  [featureA remote] out:', remoteOut);
+    check('FEATURE A: local <link> resolved → padded wrapper PRESERVED (unchanged, not rewritten)', localPreserved);
+    check(
+      'FEATURE A: remote <link> ignored → unknown wrapper FLATTENED',
+      existsSync(remotePath) && !remoteOut.includes('class="pad"'),
+    );
+  } catch (err) {
+    check('FEATURE A: built-CLI per-file HTML CSS run did not throw', false);
+    console.error(err);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// 11) FEATURE B — the worker pool, through the BUILT CLI bin. A many-file dir must be processed
+//     end-to-end (the pool loads `domflax/dist/worker.cjs` by path relative to `cli.cjs`), optimize
+//     every file, and exit cleanly with the always-printed summary.
+{
+  const { readFileSync: rf, existsSync } = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const workerBin = path.join(here, '..', 'packages', 'domflax', 'dist', 'worker.cjs');
+  check('FEATURE B: worker bundle shipped next to cli.cjs (domflax/dist/worker.cjs)', existsSync(workerBin));
+
+  const cliBin = path.join(here, '..', 'packages', 'domflax', 'dist', 'cli.cjs');
+  const tmp = mkdtempSync(path.join(tmpdir(), 'domflax-smoke-pool-'));
+  try {
+    const N = 40;
+    for (let i = 0; i < N; i++) {
+      writeFileSync(
+        path.join(tmp, `C${i}.tsx`),
+        `export default function C${i}(){return (<div className="px-4 py-4 bg-white">{x}</div>);}\n`,
+      );
+    }
+    const out = path.join(tmp, '__out');
+    const res = spawnSync(process.execPath, [cliBin, tmp, '--out', out, '--yes'], { encoding: 'utf8' });
+    const combined = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+    check('FEATURE B: built CLI processed a many-file dir (exit 0)', res.status === 0);
+    check('FEATURE B: summary reports all files optimized', /optimized 40 of 40 files/.test(combined));
+    let wrote = 0;
+    let compressed = true;
+    for (let i = 0; i < N; i++) {
+      const p = path.join(out, `C${i}.tsx`);
+      if (existsSync(p)) {
+        wrote += 1;
+        const c = rf(p, 'utf8');
+        if (!(c.includes('p-4') && !c.includes('px-4'))) compressed = false;
+      }
+    }
+    check('FEATURE B: every file written to --out', wrote === N);
+    check('FEATURE B: every file actually compressed (px-4 py-4 → p-4)', compressed);
+  } catch (err) {
+    check('FEATURE B: built-CLI pool run did not throw', false);
+    console.error(err);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 if (failures.length > 0) {
   console.error(`\nSMOKE FAIL: ${failures.length} assertion(s) failed:`);
   for (const f of failures) console.error(`  - ${f}`);

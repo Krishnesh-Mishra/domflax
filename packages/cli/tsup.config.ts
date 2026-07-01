@@ -1,7 +1,9 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // `worker` is emitted as its OWN entry so `new Worker(...)` can load `worker.cjs`/`worker.js` at
+  // runtime (both from this package's dist and when bundled into `domflax`'s dist).
+  entry: { index: 'src/index.ts', worker: 'src/worker.ts' },
   format: ['esm', 'cjs'],
   dts: true,
   clean: true,

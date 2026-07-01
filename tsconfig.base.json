@@ -19,6 +19,9 @@
       "@domflax/pattern-kit/testing": [
         "packages/pattern-kit/src/testing.ts"
       ],
+      "@domflax/cli/worker": [
+        "packages/cli/src/worker.ts"
+      ],
       "@domflax/*": [
         "packages/*/src/index.ts"
       ]

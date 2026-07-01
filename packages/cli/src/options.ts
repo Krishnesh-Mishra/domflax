@@ -39,6 +39,13 @@ export interface CliOptions {
   readonly safety: SafetyLevel;
   /** Root to resolve the Tailwind/postcss engines from; `null` ⇒ `process.cwd()`. */
   readonly projectRoot: string | null;
+  /**
+   * Memory budget in MB (`--max-memory`) — caps BOTH the worker pool's RAM AND its parallelism
+   * (fewer MB ⇒ fewer workers ⇒ slower but never OOM). `null` ⇒ default ≈ 70% of free RAM.
+   */
+  readonly maxMemory: number | null;
+  /** Hard cap on worker count (`--concurrency`), still clamped down by the memory budget; `null` ⇒ auto. */
+  readonly concurrency: number | null;
 }
 
 /** The CLI default optimization safety level (D-level 2 = default). */
@@ -55,6 +62,16 @@ function toSafety(raw: string | undefined): SafetyLevel {
   const n = Number(raw);
   if (n === 0 || n === 1 || n === 2 || n === 3) return n;
   throw new Error(`domflax: invalid --safety "${raw}" (expected 0, 1, 2 or 3)`);
+}
+
+/** Parse a `--max-memory`/`--concurrency` value into a positive integer, or throw. `null` when absent. */
+function toPositiveInt(raw: string | undefined, flag: string): number | null {
+  if (raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`domflax: invalid ${flag} "${raw}" (expected a positive integer)`);
+  }
+  return n;
 }
 
 /**
@@ -77,6 +94,8 @@ export function parseInvocation(argv: readonly string[]): CliOptions {
       yes: { type: 'boolean', short: 'y', default: false },
       safety: { type: 'string' },
       'project-root': { type: 'string' },
+      'max-memory': { type: 'string' },
+      concurrency: { type: 'string' },
     },
   });
 
@@ -98,6 +117,8 @@ export function parseInvocation(argv: readonly string[]): CliOptions {
     passes: null,
     safety: toSafety(values.safety),
     projectRoot: values['project-root'] ?? null,
+    maxMemory: toPositiveInt(values['max-memory'], '--max-memory'),
+    concurrency: toPositiveInt(values.concurrency, '--concurrency'),
   };
 }
 
@@ -124,7 +145,10 @@ export const USAGE: string = [
   '  --dangerously-overwrite-source overwrite source in place (needs a clean git tree)',
   '  --no-git-check                 skip the clean-git-tree gate',
   '  --safety <0|1|2|3>             optimization aggressiveness (default: 2)',
+  '  --max-memory <MB>              memory budget; caps pool RAM AND parallelism (default: ~70% free RAM)',
+  '  --concurrency <N>              max parallel workers (still clamped by --max-memory)',
   '  --yes, --no-interactive        never launch the wizard (CI-safe)',
   '',
+  'Many files are processed across CPU cores by a memory-bounded worker pool; small jobs run inline.',
   'With no paths in an interactive terminal, a guided wizard launches.',
 ].join('\n');

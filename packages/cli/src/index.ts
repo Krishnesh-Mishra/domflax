@@ -12,9 +12,11 @@ import * as path from 'node:path';
 
 import type { CliOptions } from './options';
 import { parseInvocation, shouldPrompt, USAGE } from './options';
+import { computeWorkerCount, shouldUsePool, runPool, addStats, emptyTotals } from './pool';
+import type { Totals } from './pool';
 import { destinationFor, isGitClean, planWrites } from './safety';
+import type { WritePlan } from './safety';
 import { createTransform } from './transform';
-import type { FileStats } from './transform';
 import { discoverInputs } from './walk';
 import { unifiedDiff } from './diff';
 import { runWizard, WIZARD_CANCELLED } from './wizard';
@@ -34,22 +36,6 @@ export interface RunResult {
   readonly exitCode: number;
 }
 
-interface Totals {
-  files: number;
-  changed: number;
-  nodesRemoved: number;
-  classesSaved: number;
-  bytesSaved: number;
-}
-
-function addStats(totals: Totals, stats: FileStats, changed: boolean): void {
-  totals.files += 1;
-  if (changed) totals.changed += 1;
-  totals.nodesRemoved += stats.nodesRemoved;
-  totals.classesSaved += stats.classesSaved;
-  totals.bytesSaved += stats.bytesSaved;
-}
-
 function printReport(totals: Totals): void {
   console.log('');
   console.log('domflax report');
@@ -61,31 +47,18 @@ function printReport(totals: Totals): void {
 }
 
 /**
- * Execute a fully-resolved {@link CliOptions}: discover inputs, enforce output safety, transform each
- * file, and either preview (dry-run), write to the mirrored output, or overwrite in place.
+ * The sequential (single-engine) path: build one transform and process every file in order. Used for
+ * dry-run (ordered diffs), small jobs, and low-RAM runs (workers ≤ 1). Returns the failure count and
+ * accumulates into `totals`.
  */
-export async function execute(options: CliOptions): Promise<RunResult> {
-  const { files, inputRoot, warnings } = discoverInputs(options.paths);
-  for (const w of warnings) console.error(`domflax: ${w}`);
-
-  if (files.length === 0) {
-    console.error('domflax: no .jsx/.tsx files found for the given paths');
-    return { exitCode: 1 };
-  }
-
-  const projectRoot = options.projectRoot ?? process.cwd();
-  const gitClean =
-    options.dangerouslyOverwriteSource && !options.noGitCheck ? isGitClean(projectRoot) : true;
-
-  const planned = planWrites(options, gitClean);
-  if (!planned.ok) {
-    console.error(`domflax: ${planned.error}`);
-    return { exitCode: 1 };
-  }
-  const plan = planned.value;
-
+function runInline(
+  files: readonly string[],
+  options: CliOptions,
+  inputRoot: string,
+  plan: WritePlan,
+  totals: Totals,
+): number {
   const transform = createTransform(options);
-  const totals: Totals = { files: 0, changed: 0, nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 };
   let failures = 0;
 
   for (const file of files) {
@@ -124,6 +97,60 @@ export async function execute(options: CliOptions): Promise<RunResult> {
       console.error(`domflax: cannot write ${target.value}: ${String((err as Error)?.message ?? err)}`);
       failures += 1;
     }
+  }
+  return failures;
+}
+
+/**
+ * Execute a fully-resolved {@link CliOptions}: discover inputs, enforce output safety, transform each
+ * file, and either preview (dry-run), write to the mirrored output, or overwrite in place. Large
+ * batches are processed by a memory-bounded worker pool; dry-run and small jobs run inline.
+ */
+export async function execute(options: CliOptions): Promise<RunResult> {
+  const { files, inputRoot, warnings } = discoverInputs(options.paths);
+  for (const w of warnings) console.error(`domflax: ${w}`);
+
+  if (files.length === 0) {
+    console.error('domflax: no .jsx/.tsx files found for the given paths');
+    return { exitCode: 1 };
+  }
+
+  const projectRoot = options.projectRoot ?? process.cwd();
+  const gitClean =
+    options.dangerouslyOverwriteSource && !options.noGitCheck ? isGitClean(projectRoot) : true;
+
+  const planned = planWrites(options, gitClean);
+  if (!planned.ok) {
+    console.error(`domflax: ${planned.error}`);
+    return { exitCode: 1 };
+  }
+  const plan = planned.value;
+
+  // Choose execution mode: a memory-bounded worker pool for large batches, else the inline path.
+  // Dry-run always runs inline (ordered diffs), as does any small job (pool startup isn't worth it).
+  const poolPlan = computeWorkerCount(options);
+  const usePool = !options.dryRun && shouldUsePool(files.length, poolPlan);
+
+  const totals: Totals = emptyTotals();
+  let failures = 0;
+
+  if (usePool) {
+    const outcome = await runPool(
+      files,
+      { options, inputRoot, plan },
+      poolPlan,
+      // Per-file "wrote" lines are collected and printed in deterministic (sorted) order below.
+    );
+    Object.assign(totals, outcome.totals);
+    failures = outcome.failures;
+    for (const { path: p, error } of outcome.errors) {
+      console.error(`domflax: failed ${path.relative(process.cwd(), p) || p}: ${error}`);
+    }
+    for (const dest of [...outcome.wrote].sort()) {
+      console.log(`domflax: wrote ${path.relative(process.cwd(), dest) || dest}`);
+    }
+  } else {
+    failures += runInline(files, options, inputRoot, plan, totals);
   }
 
   // Always tell the user what happened — never exit silently.

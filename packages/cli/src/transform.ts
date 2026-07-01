@@ -36,6 +36,9 @@ import { builtinPatterns } from '@domflax/patterns';
 import { createCssResolver } from '@domflax/resolver-css';
 import { createTailwindResolver } from '@domflax/resolver-tailwind';
 
+import * as path from 'node:path';
+
+import { cssSetKey, extractHtmlStylesheets } from './html-css';
 import type { CliOptions, ProviderOption } from './options';
 
 /* ───────────────────────── per-file result + stats ───────────────────────── */
@@ -181,11 +184,47 @@ interface PreparedFile {
 
 export function createTransform(options: CliOptions): Transform {
   const projectRoot = options.projectRoot ?? process.cwd();
-  const resolver = buildResolver(options.provider, options.css, projectRoot);
+  const globalResolver = buildResolver(options.provider, options.css, projectRoot);
   const patterns = selectPatterns(options.passes);
 
+  // FEATURE A — per-file resolver cache, keyed by the exact CSS set (sorted paths + inline hash), so
+  // pages that share stylesheet imports reuse one resolver (and its parsed engine).
+  const resolverCache = new Map<string, StyleResolver>();
+
+  /**
+   * Choose the resolver for one file. `.jsx`/`.tsx` and every non-custom provider use the single
+   * GLOBAL resolver. An `.html`/`.htm` file under the CUSTOM provider resolves against the GLOBAL set
+   * (`options.css`, applied to every file) PLUS its own `<link>` imports and inline `<style>` blocks.
+   */
+  function resolverFor(code: string, id: string): StyleResolver {
+    if (options.provider !== 'custom' || htmlKindOf(id) === null) return globalResolver;
+    const { files: localFiles, inline } = extractHtmlStylesheets(code, id);
+    if (localFiles.length === 0 && inline.length === 0) return globalResolver;
+
+    // Canonicalize: global stylesheets first (base cascade), then the file's own imports. The cache
+    // key — and the resolver's own file order — are the sorted, resolved paths, so identical import
+    // sets always hit the same cache entry regardless of source ordering.
+    const globalPaths = options.css.map((p) => path.resolve(p));
+    const sortedPaths = [...new Set([...globalPaths, ...localFiles])].sort();
+    const key = cssSetKey(sortedPaths, inline);
+
+    let resolver = resolverCache.get(key);
+    if (!resolver) {
+      const inlineFiles = inline.map((css, i) => ({ id: `${id}#inline-${i}`, css }));
+      resolver = createCssResolver(inlineFiles, { files: sortedPaths, projectRoot });
+      resolverCache.set(key, resolver);
+    }
+    return resolver;
+  }
+
   /** PARSE (JSX → IR, classes onto `computed`) + AUTHORIZE + build the apply context for `gate`. */
-  function prepare(code: string, id: string, kind: FileKind, gate: FlattenGate): PreparedFile {
+  function prepare(
+    code: string,
+    id: string,
+    kind: FileKind,
+    gate: FlattenGate,
+    resolver: StyleResolver,
+  ): PreparedFile {
     const parsed = createJsxFrontend().parse(code, {
       id,
       kind,
@@ -215,7 +254,7 @@ export function createTransform(options: CliOptions): Transform {
    * safety floors itself (opaque nodes → 0), so — unlike the JSX prepare — we must NOT blanket-open
    * every node to floor 3.
    */
-  function prepareHtml(code: string, id: string, gate: FlattenGate): PreparedFile {
+  function prepareHtml(code: string, id: string, gate: FlattenGate, resolver: StyleResolver): PreparedFile {
     const parsed = createHtmlFrontend().parse(code, {
       id,
       kind: 'html',
@@ -243,6 +282,7 @@ export function createTransform(options: CliOptions): Transform {
     optimized: IRDocument,
     id: string,
     nodesIn: number,
+    resolver: StyleResolver,
     backend: 'jsx' | 'html' = 'jsx',
   ): FileResult {
     syncClassesFromComputed(optimized, resolver, normalizer);
@@ -275,18 +315,20 @@ export function createTransform(options: CliOptions): Transform {
   }
 
   return {
-    resolver,
+    resolver: globalResolver,
     transformFile(code: string, id: string): FileResult {
       const kind = jsxKindOf(id);
       if (kind !== null) {
-        const { doc, ctx, passes, nodesIn } = prepare(code, id, kind, 'provably-safe');
+        const resolver = resolverFor(code, id);
+        const { doc, ctx, passes, nodesIn } = prepare(code, id, kind, 'provably-safe', resolver);
         const { doc: optimized } = runPasses(doc, passes, ctx);
-        return finish(code, optimized, id, nodesIn);
+        return finish(code, optimized, id, nodesIn, resolver);
       }
       if (htmlKindOf(id) !== null) {
-        const { doc, ctx, passes, nodesIn } = prepareHtml(code, id, 'provably-safe');
+        const resolver = resolverFor(code, id);
+        const { doc, ctx, passes, nodesIn } = prepareHtml(code, id, 'provably-safe', resolver);
         const { doc: optimized } = runPasses(doc, passes, ctx);
-        return finish(code, optimized, id, nodesIn, 'html');
+        return finish(code, optimized, id, nodesIn, resolver, 'html');
       }
       return passthroughResult(code);
     },
