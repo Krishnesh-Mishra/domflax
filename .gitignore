@@ -6,3 +6,7 @@ dist
 .env.*
 coverage
 .tsup
+# domflax CLI default output dir — never commit (may contain a user's private site)
+domflax-out
+domflax-out/
+**/domflax-out/
