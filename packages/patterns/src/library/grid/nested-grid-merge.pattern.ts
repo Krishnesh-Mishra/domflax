@@ -151,7 +151,7 @@ const isInnerGrid: Matcher = and(
  */
 export const nestedGridMerge = definePattern({
   name: 'nested-grid-merge',
-  category: 'flatten/nested-grid-merge',
+  category: 'flatten/grid/nested-grid-merge',
   safety: 2,
   doc: {
     title: 'Merge nested grid containers',

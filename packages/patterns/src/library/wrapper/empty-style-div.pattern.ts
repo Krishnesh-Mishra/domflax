@@ -93,7 +93,7 @@ const hasNonBlockDisplay: Matcher = (node, ctx) => {
  */
 export const emptyStyleDiv = definePattern({
   name: 'empty-style-div',
-  category: 'flatten/empty-style-div',
+  category: 'flatten/wrapper/empty-style-div',
   safety: 1,
   doc: {
     title: 'Flatten empty-style div wrapper',

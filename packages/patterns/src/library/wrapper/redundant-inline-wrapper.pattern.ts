@@ -107,7 +107,7 @@ const hasNonInlineDisplay: Matcher = (node, ctx) => {
  */
 export const redundantInlineWrapper = definePattern({
   name: 'redundant-inline-wrapper',
-  category: 'flatten/redundant-inline-wrapper',
+  category: 'flatten/wrapper/redundant-inline-wrapper',
   safety: 2,
   doc: {
     title: 'Flatten redundant inline wrapper',

@@ -146,7 +146,7 @@ const isInnerFlex: Matcher = and(
  */
 export const nestedFlexMerge = definePattern({
   name: 'nested-flex-merge',
-  category: 'flatten/nested-flex-merge',
+  category: 'flatten/flex/nested-flex-merge',
   safety: 2,
   doc: {
     title: 'Merge nested flex containers',

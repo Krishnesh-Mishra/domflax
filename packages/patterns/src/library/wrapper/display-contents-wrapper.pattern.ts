@@ -82,7 +82,7 @@ const targetedByStructuralPseudo: Matcher = (node, ctx) => {
  */
 export const displayContentsWrapper = definePattern({
   name: 'display-contents-wrapper',
-  category: 'flatten/display-contents-wrapper',
+  category: 'flatten/wrapper/display-contents-wrapper',
   safety: 2,
   doc: {
     title: 'Flatten display:contents wrapper',

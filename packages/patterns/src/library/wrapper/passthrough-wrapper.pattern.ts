@@ -88,7 +88,7 @@ const targetedByStructuralPseudo: Matcher = (node, ctx) => {
  */
 export const passthroughWrapper = definePattern({
   name: 'passthrough-wrapper',
-  category: 'flatten/passthrough-wrapper',
+  category: 'flatten/wrapper/passthrough-wrapper',
   safety: 2,
   doc: {
     title: 'Flatten passthrough wrapper',

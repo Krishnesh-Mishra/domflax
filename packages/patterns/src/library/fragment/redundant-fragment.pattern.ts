@@ -87,7 +87,7 @@ function parentIsRedundantFragment(node: NodeLike, ctx: MatchContext): boolean {
  */
 export const redundantFragment = definePattern({
   name: 'redundant-fragment',
-  category: 'flatten/redundant-fragment',
+  category: 'flatten/fragment/redundant-fragment',
   safety: 1,
   doc: {
     title: 'Flatten redundant single-child fragment',

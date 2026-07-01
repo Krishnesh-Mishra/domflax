@@ -24,7 +24,7 @@ import { definePattern } from '@domflax/pattern-kit';
  */
 export const inlineFlexCenterWrapper = definePattern({
   name: 'inline-flex-center-wrapper',
-  category: 'flatten/inline-flex-center-wrapper',
+  category: 'flatten/flex/inline-flex-center-wrapper',
   safety: 2,
   doc: {
     title: 'Flatten inline-flex-centering wrapper',
