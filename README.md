@@ -2,7 +2,7 @@
 
 > Compile-time DOM flattener and semantic CSS compressor — fewer DOM nodes, smaller class sets, **identical rendered UI**.
 
-`domflax` analyzes your JSX at build time and rewrites it to a smaller equivalent:
+`domflax` analyzes your JSX **and HTML** at build time and rewrites it to a smaller equivalent:
 
 1. **Compress** — collapses verbose class sets into their shortest equivalents (`px-4 py-4 mt-2 mb-2` → `p-4 my-2`, `h-10 w-10` → `size-10`).
 2. **Flatten** — removes wrapper elements that are *provably inert* (they add no layout and paint nothing).
@@ -24,10 +24,10 @@ It rewrites only the **static shape** of your markup. Dynamic class lists (`clas
 **Safety model — conservative by default, no browser involved.**
 
 - **Compression is always safe.** It only re-serializes an element's *own* class list, so a `ref`, an event handler, a `{dynamic}` child, or `dangerouslySetInnerHTML` never blocks it — only a *dynamic* className (or a class a CSS selector depends on) is left alone.
-- **Flattening is conservative.** A wrapper is removed only when removal is *provably* render-neutral — it establishes no layout context and has no style to reproduce on its child. It never drops a style it can't reproduce, and never touches a wrapper a CSS selector depends on (`.list > .item h3`).
+- **Flattening is conservative.** A wrapper is removed only when removal is *provably* render-neutral — it establishes no layout context and has no style to reproduce on its child. A `flex`/`grid` **centering** wrapper is removed only when its parent is statically `display:grid` (so `place-self:center` is provably equivalent — Chromium-verified); a flex/block/unknown parent leaves it preserved. It never drops a style it can't reproduce, and never touches a wrapper a CSS selector depends on (`.list > .item h3`).
 - domflax runs as a **purely static** source transform. It never launches a browser, so builds stay fast and deterministic.
 
-> **Status: v0.1.2.** Works end-to-end on real `.jsx`/`.tsx` — in component-return position **and inside `.map()` / expressions (list rows)** — via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. 22 patterns. Wrappers that establish a layout context (e.g. `flex`/`grid` centering) are **conservatively preserved** — proving those render-identical needs context a static pass can't see; recovering them safely is on the Roadmap. APIs may change before 1.0.
+> **Status: v0.1.4.** Optimizes real `.jsx`/`.tsx` **and `.html`** — component-return position, inside `.map()`/expressions, and whole static-HTML sites — via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. 22 patterns. Compression works everywhere (incl. dynamic content); inert-wrapper flatten removes nodes; centering wrappers flatten where it's *provably* render-identical (a `grid` parent). The CLI batches large sites across CPU cores with a **memory-bounded worker pool** (`--max-memory`, never OOM), and **auto-detects each HTML page's own `<link>` stylesheets**. Still **static-only — never launches a browser** during a build. APIs may change before 1.0.
 
 ## Install
 
@@ -96,9 +96,24 @@ npx domflax ./src --out ./domflax-out
 | `<path>` | Folder (auto-scanned) or glob of files. |
 | `--out <dir>` | Write optimized output here (mirrors input structure). |
 | `--provider <name>` | `auto` (default), `tailwind`, or `custom`. |
-| `--css <files...>` | Stylesheets when `--provider custom`. |
+| `--css <files...>` | **Global** stylesheets (`--provider custom`); each `.html` page's own `<link>` imports are auto-detected on top. |
+| `--max-memory <MB>` | Cap total RAM — and thus worker parallelism. Default ≈ 70% of free RAM; low values run slower but never OOM. |
+| `--concurrency <N>` | Cap worker count (memory always wins). |
 | `--dry-run` | Preview changes, write nothing. |
 | `--dangerously-overwrite-source` | Allow in-place source rewrite (needs clean git). |
+
+### HTML & static sites
+
+domflax optimizes `.html`/`.htm` too (parse5), so you can run it over a **built static site** (`dist/`):
+
+```bash
+npx domflax ./dist --provider custom --out ./dist-optimized
+```
+
+- **Per-page CSS, automatically.** Each HTML file resolves against the stylesheets *it* links (`<link rel="stylesheet">`, relative + local) plus any global `--css` — so you usually don't select CSS at all, and selector-safety is accurate per page.
+- **Centering actually flattens here.** In HTML the parent is statically known, so a `grid`-parent centering wrapper is provably removable (Chromium-verified) — real node removal, not just compression.
+- **Big sites, safely parallel.** Large batches run across CPU cores with a memory-bounded worker pool: `--max-memory` caps RAM (and parallelism); a bad or huge file fails just that file (reported), never crashing or OOM-ing the run.
+- **Byte-for-byte outside edits** — doctype, comments, whitespace, scripts, and attribute order are preserved; only changed `class` values and unwrapped tags are touched.
 
 ## Writing a pattern
 
@@ -134,7 +149,7 @@ The transform itself is static and never launches a browser. `domflax/verify` is
 
 ## Examples
 
-Runnable examples live in [`examples/`](./examples): `vite-react-tailwind`, `vite-custom-css` (custom provider + selector-safety), and `next-tailwind`.
+Runnable examples live in [`examples/`](./examples): `vite-react-tailwind`, `vite-custom-css` (custom provider + selector-safety), `next-tailwind`, and `static-html` (CLI optimizing a plain `.html` page with per-page `<link>` CSS auto-detection).
 
 ## Roadmap
 
@@ -147,10 +162,12 @@ Runnable examples live in [`examples/`](./examples): `vite-react-tailwind`, `vit
 - [x] Optimize JSX inside `.map()` / expressions (list rows)
 - [x] Vite + Next.js (webpack) adapters + CLI (folders, wizard, output-safety)
 - [x] Standalone equivalence verifier (Playwright, opt-in)
-- [ ] Context-aware (or opt-in-verified) flatten for `flex`/`grid` centering wrappers
-- [ ] HTML frontend (plain `.html` / Astro static)
+- [x] HTML frontend (`.html`/`.htm`, parse5 + surgical span edits) with per-page `<link>` CSS auto-detection
+- [x] Context-aware centering-wrapper flatten (provably safe under a `grid` parent, Chromium-verified)
+- [x] Memory-bounded parallel CLI batch (`--max-memory` / `--concurrency`, never-OOM)
+- [ ] Astro-static frontend; more providers
 - [ ] `domflax/runtime` — optimize dynamic HTML strings before `innerHTML`
-- [ ] More providers; `templatize` (plain-HTML cloneNode)
+- [ ] `templatize` (plain-HTML cloneNode)
 
 ## License
 

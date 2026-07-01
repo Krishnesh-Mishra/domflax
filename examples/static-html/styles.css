@@ -1,0 +1,15 @@
+/* Plain custom CSS for the domflax static-HTML demo — no Tailwind, no build step.
+   Run:  npx domflax ./index.html --provider custom --out ./optimized  */
+
+/* Inert wrappers domflax removes: display:contents paints nothing and establishes no box. */
+.wrap { display: contents; }
+
+.badge {
+  background: #eef2ff;
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem;
+}
+
+/* Selector-safety: a descendant selector depends on .row (inside .panel), so those wrappers
+   are NEVER flattened — removing them would break this rule. */
+.panel > .row h3 { color: #0f3b2e; }

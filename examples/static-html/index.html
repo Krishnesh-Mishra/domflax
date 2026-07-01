@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>domflax — static HTML demo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Two inert wrappers around one real element — domflax removes both. -->
+    <div class="wrap">
+      <div>
+        <span class="badge">Wrapped in two inert divs</span>
+      </div>
+    </div>
+
+    <!-- A CSS selector depends on .row / .panel, so domflax preserves them (selector-safety). -->
+    <section class="panel">
+      <div class="row"><h3>Kept — a selector depends on .row</h3></div>
+    </section>
+  </body>
+</html>
