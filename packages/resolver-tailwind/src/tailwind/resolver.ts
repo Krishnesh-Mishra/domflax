@@ -31,10 +31,22 @@ import { buildStyleMap, shadowedBy } from './stylemap';
 import type { TwEngine, TwGeneratedDecl, TwGeneratedRule } from './types';
 import { DROPPABLE_USAGE, OPAQUE_USAGE } from './usage';
 
+/**
+ * Providers already warned about an unsupported Tailwind major, so the diagnostic is emitted ONCE per
+ * distinct provider/version even when many resolvers (per-file caches, multiple runs) are constructed.
+ */
+const warnedUnsupported = new Set<string>();
+
 class TailwindResolver implements StyleResolver {
   readonly id = 'tailwind';
   readonly provider: string;
   readonly fingerprint: string;
+  /**
+   * SAFETY (Layer 1): the detected Tailwind MAJOR when the project's version is one this resolver
+   * cannot drive (v4+), else `null`. When set, {@link resolve} reports every token as unknown, so
+   * downstream files are left unchanged (never mis-optimized). Exposed for diagnostics/tests.
+   */
+  readonly unsupportedMajor: number | null;
 
   readonly #engine: TwEngine | null;
   /** Per-token extraction cache (engine output is pure for a fixed config). */
@@ -45,11 +57,26 @@ class TailwindResolver implements StyleResolver {
   #reverseIndex: ReadonlyArray<readonly [string, ReadonlyMap<CssProperty, string>]> | null = null;
 
   constructor(config: TailwindResolverConfig = {}) {
-    this.#engine = loadEngine(config);
+    const loaded = loadEngine(config);
+    this.#engine = loaded.engine;
+    this.unsupportedMajor = loaded.unsupportedMajor;
     this.provider =
-      config.provider ?? (this.#engine ? `tailwindcss@${this.#engine.version}` : 'tailwindcss');
+      config.provider ??
+      (loaded.version ? `tailwindcss@${loaded.version}` : 'tailwindcss');
     const seed = JSON.stringify(config.config ?? {}) + (config.configPath ?? '');
     this.fingerprint = config.fingerprint ?? `${this.provider}/${fnv1a(seed)}`;
+
+    // SAFETY (Layer 1): fail LOUDLY (once) when the project's Tailwind is a major we cannot drive.
+    // Every class then resolves to `unknown` (below), so the per-element fail-safe leaves files
+    // unchanged instead of unsafely flattening. (v4 SUPPORT itself is a separate, later task.)
+    if (this.unsupportedMajor !== null && !warnedUnsupported.has(this.provider)) {
+      warnedUnsupported.add(this.provider);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `domflax: detected Tailwind v${this.unsupportedMajor} (${this.provider}) — not yet supported ` +
+          `by the resolver; classes cannot be resolved, so files are left unchanged to avoid unsafe edits.`,
+      );
+    }
   }
 
   /** Engine-backed, cached single-token extraction. */

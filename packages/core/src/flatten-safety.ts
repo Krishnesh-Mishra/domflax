@@ -427,6 +427,16 @@ export function classifyFlattenOps(
     return { kind: 'provably-safe', wrapperId: null, childId: null };
   }
 
+  // SAFETY (Layer 2, backstop): if ANY of the wrapper's own class tokens was UNRESOLVED, its true
+  // style is UNKNOWN — `wrapper.computed` is only the resolved subset, so the static "inert" reasoning
+  // below (which sees an empty/partial map) could wrongly clear it. Never treat such a wrapper as
+  // provably safe to unwrap. Under the default `'provably-safe'` gate this reverts (preserves) the
+  // flatten; the match-time `hasOwnVisualStyle` gate already blocks the paintsNothing patterns, so this
+  // catches a positive-computed flatten (e.g. nested-flex-merge) that also carries an unknown token.
+  if (wrapper.meta.hasUnresolvedClasses) {
+    return { kind: 'needs-verification', wrapperId, childId: survivingChildOf(ops, wrapper, before) };
+  }
+
   const childId = survivingChildOf(ops, wrapper, before);
   const wrapperComputed = norm.normalizeStyleMap(wrapper.computed);
   const childAfter = childId != null ? getElement(after, childId)?.computed ?? null : null;

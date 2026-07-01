@@ -148,6 +148,12 @@ export const hasOwnVisualStyle: Matcher = (node, ctx) => {
   const el = asElement(node);
   if (!el) return false;
   if (el.meta.hasOwnVisualStyle) return true;
+  // SAFETY (Layer 2): an element with an UNRESOLVED class has an UNKNOWN true style — we cannot prove
+  // it paints nothing, so it must NOT satisfy `paintsNothing` (`not(hasOwnVisualStyle)`). Reporting
+  // "has own visual style" here makes every flatten pattern gated on paintsNothing decline to match,
+  // so the element is preserved. This is the primary flatten fail-safe (the flatten-safety classifier
+  // is the backstop). Compress is unaffected — its guards never consult hasOwnVisualStyle.
+  if (el.meta.hasUnresolvedClasses) return true;
 
   const computedMap = ctx.computedOf(el as unknown as NodeLike) ?? (el.computed as StyleMap);
   const norm = normalizer.normalizeStyleMap(computedMap as StyleMap);

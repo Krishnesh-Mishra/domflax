@@ -274,7 +274,9 @@ const check = (label, cond) => {
 
 // 10) FEATURE A — per-file HTML CSS, through the BUILT CLI bin. A page that links its OWN stylesheet
 //     resolves against it (not just the global --css): a `.pad` wrapper the local sheet marks
-//     load-bearing (padding) is PRESERVED, while an unknown (remote-linked) one would be flattened.
+//     load-bearing (padding) is PRESERVED. A page linking the SAME class REMOTELY (ignored) leaves the
+//     class UNRESOLVED — and an unresolved class means UNKNOWN style, so the wrapper is ALSO PRESERVED
+//     (SAFETY Layer 2: never flatten an element whose classes could not be resolved).
 {
   const { spawnSync } = await import('node:child_process');
   const { readFileSync, existsSync } = await import('node:fs');
@@ -302,15 +304,16 @@ const check = (label, cond) => {
     // copy it to --out. Preserved ⇒ absent-from-out OR (if present) still carrying class="pad".
     const localPath = path.join(out, 'page.html');
     const localPreserved = !existsSync(localPath) || readFileSync(localPath, 'utf8').includes('class="pad"');
-    // The remote page's `.pad` is UNKNOWN (remote sheet ignored) → styleless wrapper → flattened, so it
-    // IS written and no longer carries the wrapper class.
+    // The remote page's `.pad` is UNKNOWN (remote sheet ignored) → UNKNOWN style, NOT provably inert →
+    // the wrapper must be PRESERVED (never flattened). Preserved ⇒ file left UNCHANGED, so the CLI does
+    // not copy it to --out; if present it still carries class="pad".
     const remotePath = path.join(out, 'remote.html');
     const remoteOut = existsSync(remotePath) ? readFileSync(remotePath, 'utf8') : '';
     console.log('  [featureA remote] out:', remoteOut);
     check('FEATURE A: local <link> resolved → padded wrapper PRESERVED (unchanged, not rewritten)', localPreserved);
     check(
-      'FEATURE A: remote <link> ignored → unknown wrapper FLATTENED',
-      existsSync(remotePath) && !remoteOut.includes('class="pad"'),
+      'FEATURE A: remote <link> ignored → UNRESOLVED wrapper PRESERVED (safety: never flatten unknown style)',
+      !existsSync(remotePath) || remoteOut.includes('class="pad"'),
     );
   } catch (err) {
     check('FEATURE A: built-CLI per-file HTML CSS run did not throw', false);

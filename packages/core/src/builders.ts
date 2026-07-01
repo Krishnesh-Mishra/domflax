@@ -111,6 +111,7 @@ export function defaultMeta(safetyFloor: SafetyLevel = 0): NodeMeta {
     hasDynamicChildren: false,
     isComponent: false,
     hasDangerousHtml: false,
+    hasUnresolvedClasses: false,
     targetedByCombinator: false,
     targetedByStructuralPseudo: false,
     selectorDependents: 0,

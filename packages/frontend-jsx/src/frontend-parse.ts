@@ -347,6 +347,10 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
           element: { tagName: tag, namespace: component ? undefined : 'html' },
         });
         computed = ctx.normalizer.normalizeStyleMap(res.styles);
+        // SAFETY (Layer 2): a token the resolver could not resolve leaves the element's true style
+        // UNKNOWN → mark it opaque for flatten (never unwrap it as inert). Distinct from a token that
+        // resolved to no paint (which keeps the element flatten-eligible).
+        if (res.unknown.length > 0) meta.hasUnresolvedClasses = true;
         for (const w of res.warnings) {
           diagnostics.push({
             code: 'DF_STYLE_CONFLICT_UNRESOLVED',

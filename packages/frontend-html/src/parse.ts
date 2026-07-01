@@ -101,9 +101,18 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
 
   /* ----- class resolution (static classes → computed style) ----- */
 
-  const resolveComputed = (tokens: readonly string[], tag: string, nodeId: IRNodeId): StyleMap => {
+  const resolveComputed = (
+    tokens: readonly string[],
+    tag: string,
+    nodeId: IRNodeId,
+    meta: NodeMeta,
+  ): StyleMap => {
     if (tokens.length === 0) return emptyStyleMap();
     const res = ctx.resolver.resolve({ classes: tokens, element: { tagName: tag, namespace: 'html' } });
+    // SAFETY (Layer 2): any unresolved token → the element's true style is UNKNOWN → mark it opaque
+    // for flatten (never unwrap it as inert). Resolved-to-no-paint elements keep hasUnresolvedClasses
+    // false and stay flatten-eligible.
+    if (res.unknown.length > 0) meta.hasUnresolvedClasses = true;
     for (const w of res.warnings) {
       diagnostics.push({
         code: 'DF_STYLE_CONFLICT_UNRESOLVED',
@@ -210,7 +219,7 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
     }
 
     const attrs: AttrMap = { entries, spreads: [], order };
-    const computed = resolveComputed(classTokens, tag, id);
+    const computed = resolveComputed(classTokens, tag, id, meta);
 
     // Children — opaque-subtree elements are NOT descended into; their inner bytes survive verbatim.
     const children: IRNodeId[] = [];

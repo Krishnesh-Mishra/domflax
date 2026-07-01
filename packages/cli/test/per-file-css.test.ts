@@ -48,11 +48,13 @@ describe('per-file HTML CSS (custom provider)', () => {
     expect(out).toContain('class="child"');
   });
 
-  it('ignores a remote <link>: the class is unknown, so the styleless wrapper is flattened away', () => {
+  it('ignores a remote <link>: the class is UNKNOWN, so the wrapper is PRESERVED (never flattened)', () => {
     const code = page('<link rel="stylesheet" href="https://cdn.example.com/local.css">', padWrap);
     const { transformFile } = createTransform(parseInvocation(['--provider', 'custom']));
     const out = transformFile(code, path.join(dir, 'page.html')).code;
-    expect(out).not.toContain('class="pad"'); // remote skipped → unknown → wrapper removed
+    // SAFETY (Layer 2): remote sheet skipped → `.pad` unresolved → UNKNOWN style. We must NOT treat it
+    // as inert; the wrapper is kept verbatim rather than unsafely flattened.
+    expect(out).toContain('class="pad"');
     expect(out).toContain('class="link"');
   });
 

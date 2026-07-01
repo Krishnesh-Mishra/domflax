@@ -175,6 +175,17 @@ export interface NodeMeta {
   hasDynamicChildren: boolean;
   isComponent: boolean;
   hasDangerousHtml: boolean;
+  /**
+   * SAFETY (Layer 2): at least one of THIS element's static class tokens could not be resolved by the
+   * style provider — a real, non-empty token that yielded no declarations and is not a known no-op
+   * utility (e.g. a Tailwind-v4 project the v3 resolver cannot drive, a JS-hook class like `js-toggle`,
+   * or a typo). The element's TRUE style is therefore UNKNOWN, so it must be treated as OPAQUE for
+   * flatten purposes (never removed/unwrapped as "inert"). Set by the frontends from
+   * `ResolveResult.unknown`; distinct from an element that RESOLVED to no paint (all tokens known,
+   * collectively non-painting) which stays flatten-eligible. Compress is unaffected — it only rewrites
+   * the element's own RESOLVED tokens and preserves unknown ones verbatim.
+   */
+  hasUnresolvedClasses: boolean;
 
   // CSS-targeting awareness (SelectorIndex-derived)
   targetedByCombinator: boolean;       // > + ~ subject

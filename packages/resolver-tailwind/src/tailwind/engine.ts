@@ -55,10 +55,55 @@ function projectRequire(projectRoot?: string): NodeRequire | null {
   return null;
 }
 
-/** Build a synchronous Tailwind v3 engine for the given resolved config; returns `null` on failure. */
-export function loadEngine(options: TailwindResolverConfig): TwEngine | null {
+/** The FIRST major version whose engine internals this (Tailwind v3) resolver cannot drive. */
+export const FIRST_UNSUPPORTED_MAJOR = 4;
+
+/** The outcome of trying to load the project's Tailwind engine. */
+export interface LoadedEngine {
+  /** The synchronous forward/reverse engine, or `null` when it could not be built. */
+  readonly engine: TwEngine | null;
+  /** The resolved `tailwindcss` version, or `null` when the package could not be located at all. */
+  readonly version: string | null;
+  /**
+   * SAFETY (Layer 1): set to the detected MAJOR when the project's `tailwindcss` is a version this
+   * resolver cannot drive (>= {@link FIRST_UNSUPPORTED_MAJOR}, e.g. v4's rewritten engine). In that
+   * case `engine` is `null` and — rather than silently resolving every class to empty and then
+   * mis-optimizing — the resolver reports every token as UNKNOWN so files are left UNCHANGED, and
+   * surfaces a one-time diagnostic. `null` for a supported/driveable (or absent) Tailwind.
+   */
+  readonly unsupportedMajor: number | null;
+}
+
+/** Parse the leading integer major from a semver-ish version string, or `null`. */
+function majorOf(version: string): number | null {
+  const m = /^\s*(\d+)/.exec(version);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Load a synchronous Tailwind engine for the given resolved config. Detects the project's
+ * `tailwindcss` version FIRST: a MAJOR this resolver cannot drive (v4+) fails LOUDLY via
+ * {@link LoadedEngine.unsupportedMajor} (engine `null`) instead of silently returning empty
+ * resolutions. Any other initialization failure returns a `null` engine with no version.
+ */
+export function loadEngine(options: TailwindResolverConfig): LoadedEngine {
   const req = projectRequire(options.projectRoot);
-  if (!req) return null;
+  if (!req) return { engine: null, version: null, unsupportedMajor: null };
+
+  // Read the version BEFORE touching the (v3-shaped) internals: v4 ships a different engine at
+  // `dist/lib.js` and has no `lib/lib/*.js` CJS internals, so probing them would only throw — we want
+  // to positively identify v4 and refuse to drive it, not fall through to a generic failure.
+  let version: string | null = null;
+  try {
+    version = (req('tailwindcss/package.json') as { version: string }).version;
+  } catch {
+    return { engine: null, version: null, unsupportedMajor: null };
+  }
+  const major = majorOf(version);
+  if (major !== null && major >= FIRST_UNSUPPORTED_MAJOR) {
+    return { engine: null, version, unsupportedMajor: major };
+  }
+
   try {
     const resolveConfig = req('tailwindcss/resolveConfig.js') as (c: unknown) => unknown;
     const { createContext } = req('tailwindcss/lib/lib/setupContextUtils.js') as {
@@ -67,7 +112,6 @@ export function loadEngine(options: TailwindResolverConfig): TwEngine | null {
     const { generateRules } = req('tailwindcss/lib/lib/generateRules.js') as {
       generateRules: (candidates: Set<string>, context: TwContext) => Array<[number, TwNode]>;
     };
-    const pkg = req('tailwindcss/package.json') as { version: string };
 
     let userConfig: unknown = options.config ?? { content: [{ raw: '' }] };
     if (options.configPath !== undefined) {
@@ -78,14 +122,18 @@ export function loadEngine(options: TailwindResolverConfig): TwEngine | null {
     const context = createContext(resolved);
 
     return {
-      version: pkg.version,
-      context,
-      generate(candidates: readonly string[]): TwNode[] {
-        const rules = generateRules(new Set(candidates), context);
-        return rules.map(([, node]) => node);
+      engine: {
+        version,
+        context,
+        generate(candidates: readonly string[]): TwNode[] {
+          const rules = generateRules(new Set(candidates), context);
+          return rules.map(([, node]) => node);
+        },
       },
+      version,
+      unsupportedMajor: null,
     };
   } catch {
-    return null;
+    return { engine: null, version, unsupportedMajor: null };
   }
 }
