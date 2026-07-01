@@ -1,5 +1,6 @@
 import type {
   ConditionKey,
+  CoverClass,
   CssProperty,
   EmitContext,
   EmitResult,
@@ -13,7 +14,7 @@ import type {
   StyleOrigin,
   StyleResolver,
 } from '@domflax/core';
-import { conditionKey, emptyStyleMap } from '@domflax/core';
+import { conditionKey, emptyStyleMap, minStringCover, styleMapTuples } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 import type selectorParser from 'postcss-selector-parser';
 import {
@@ -63,6 +64,8 @@ export class CustomCSSResolver implements StyleResolver {
   readonly #complex: readonly string[];
 
   #reverse: readonly ReverseEntry[] | null = null;
+  /** Lazily built cover vocabulary (full condition-keyed tuple sets) for the exact-cover engine. */
+  #coverVocab: readonly CoverClass[] | null = null;
 
   public constructor(cssFiles: readonly CssFile[] = [], options: CssResolverOptions = {}) {
     ensurePostcss(options.projectRoot);
@@ -101,8 +104,26 @@ export class CustomCSSResolver implements StyleResolver {
 
   public emit(styles: StyleMap, ctx: EmitContext): EmitResult {
     const norm = ctx.normalizer ?? normalizer;
+    const normalized = norm.normalizeStyleMap(styles);
+
+    // Primary path: the provider-uniform minimal-string exact cover over the whole class vocabulary —
+    // this is what lets custom CSS finally compress (pick the shortest class set, or the single
+    // semantic class, that reproduces the target; drop a class another class fully covers). The
+    // element's own droppable tokens are members of the vocabulary, so a cover always exists when the
+    // target is reproducible. The chosen set is verified by the mandatory re-resolve backstop below.
+    const universe = styleMapTuples(normalized, norm);
+    if (universe.length === 0) return { classes: [], exact: true, warnings: [] };
+    const chosen = minStringCover(universe, this.#buildCoverVocab());
+    if (chosen && chosen.length > 0) {
+      const reTuples = new Set(styleMapTuples(this.resolve({ classes: chosen }).styles, norm));
+      let ok = reTuples.size === universe.length;
+      if (ok) for (const t of universe) if (!reTuples.has(t)) { ok = false; break; }
+      if (ok) return { classes: chosen, exact: true, warnings: [] };
+    }
+
+    // Fallback: the original greedy set-cover (also surfaces uncovered decls via `exact:false`).
     const remaining = new Map<string, string>();
-    for (const [ck, block] of norm.normalizeStyleMap(styles).blocks) {
+    for (const [ck, block] of normalized.blocks) {
       for (const [prop, decl] of block.decls) {
         remaining.set(`${ck} ${prop}`, String(decl.value));
       }
@@ -366,7 +387,24 @@ export class CustomCSSResolver implements StyleResolver {
     return normalizer.normalizeStyleMap({ blocks: rawBlocks });
   }
 
-  /** Build (once) the reverse index used by {@link emit}. */
+  /**
+   * Build (once) the cover vocabulary for the exact-cover engine: every forward-resolvable class
+   * mapped to the {@link styleMapTuples} of its full (condition-keyed, `!important`-aware) declaration
+   * set. Unlike {@link #reverseIndex} this carries ALL style conditions and the important flag, so the
+   * engine can pick a custom class covering hover/media declarations too.
+   */
+  #buildCoverVocab(): readonly CoverClass[] {
+    if (this.#coverVocab) return this.#coverVocab;
+    const out: CoverClass[] = [];
+    for (const token of this.#classIndex.keys()) {
+      const tuples = styleMapTuples(this.#resolveTokens([token], [token]), normalizer);
+      if (tuples.length > 0) out.push({ token, tuples });
+    }
+    this.#coverVocab = out;
+    return out;
+  }
+
+  /** Build (once) the reverse index used by the greedy {@link emit} fallback. */
   #reverseIndex(): readonly ReverseEntry[] {
     if (this.#reverse) return this.#reverse;
     const out: ReverseEntry[] = [];

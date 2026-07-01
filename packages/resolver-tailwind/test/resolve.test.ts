@@ -73,8 +73,11 @@ describe('createTailwindResolver — forward resolve (real tailwindcss engine)',
     expect(val(styles, 'row-gap')).toBe('0.5rem');
     expect(val(styles, 'column-gap')).toBe('0.5rem');
 
-    // rounded-lg → border-radius 0.5rem.
-    expect(val(styles, 'border-radius')).toBe('0.5rem');
+    // rounded-lg → border-radius, expanded to the four CORNER longhands by the shared normalizer.
+    expect(val(styles, 'border-top-left-radius')).toBe('0.5rem');
+    expect(val(styles, 'border-top-right-radius')).toBe('0.5rem');
+    expect(val(styles, 'border-bottom-right-radius')).toBe('0.5rem');
+    expect(val(styles, 'border-bottom-left-radius')).toBe('0.5rem');
   });
 
   it('expands box shorthands to longhands via the shared normalizer', () => {

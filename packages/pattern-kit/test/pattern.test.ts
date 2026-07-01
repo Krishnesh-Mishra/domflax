@@ -144,7 +144,10 @@ describe('definePattern() — declarative authoring', () => {
     expect((out.nodes.get(out.root) as IRFragment).children).toContain(childId);
 
     const base = child!.computed.blocks.get(conditionKey(BASE_CONDITION));
-    expect(base?.decls.get('place-self' as CssProperty)?.value).toBe('center');
+    // `place-self: center` is expanded to its two axis longhands by the shared normalizer (the
+    // reverse-emit still folds them back to the single `place-self-center` utility on print).
+    expect(base?.decls.get('align-self' as CssProperty)?.value).toBe('center');
+    expect(base?.decls.get('justify-self' as CssProperty)?.value).toBe('center');
     expect(base?.decls.get('background-color' as CssProperty)?.value).toBe('red');
   });
 

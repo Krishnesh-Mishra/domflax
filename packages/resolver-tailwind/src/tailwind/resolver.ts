@@ -3,6 +3,7 @@
  */
 
 import type {
+  CoverClass,
   CssProperty,
   EmitContext,
   EmitResult,
@@ -16,7 +17,7 @@ import type {
   StyleOrigin,
   StyleResolver,
 } from '@domflax/core';
-import { BASE_CONDITION, conditionKey } from '@domflax/core';
+import { BASE_CONDITION, conditionKey, minStringCover, styleMapTuples, tupleKey } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 
 import type { TailwindResolverConfig } from './config';
@@ -53,8 +54,10 @@ class TailwindResolver implements StyleResolver {
   readonly #tokenCache = new Map<string, ExtractedToken>();
   /** Per-class-set forward-resolution cache. */
   readonly #resolveCache = new Map<string, ResolveResult>();
-  /** Lazily built reverse index for {@link emit}. */
+  /** Lazily built reverse index for the greedy {@link emit} fallback. */
   #reverseIndex: ReadonlyArray<readonly [string, ReadonlyMap<CssProperty, string>]> | null = null;
+  /** Lazily built cover vocabulary (base-condition tuple sets) for the exact-cover engine. */
+  #coverVocab: readonly CoverClass[] | null = null;
 
   constructor(config: TailwindResolverConfig = {}) {
     const loaded = loadEngine(config);
@@ -210,9 +213,83 @@ class TailwindResolver implements StyleResolver {
     return index;
   }
 
+  /**
+   * The cover vocabulary: every base-condition, plain-subject utility mapped to the {@link tupleKey}s
+   * of its full normalized-longhand declaration set. Built once from a SINGLE engine `generate` over
+   * the enumerable class list (grouped by selector), so it is the same cost as {@link #buildReverseIndex}.
+   * This is what the provider-uniform exact-cover engine searches; the element's own droppable tokens
+   * are members of it, guaranteeing feasibility. Variant / combinator / pseudo utilities are excluded
+   * (their effect is not the element's own base box), so a target carrying such conditions simply finds
+   * no cover and falls back to the greedy emit.
+   */
+  #buildCoverVocab(): readonly CoverClass[] {
+    if (this.#coverVocab) return this.#coverVocab;
+    const baseCk = String(conditionKey(BASE_CONDITION));
+    const out: CoverClass[] = [];
+    if (this.#engine) {
+      try {
+        const classes = this.#engine.context
+          .getClassList()
+          .filter((c): c is string => typeof c === 'string');
+        const nodes = this.#engine.generate(classes);
+        for (const node of nodes) {
+          if (node.type !== 'rule') continue;
+          const rule = node as TwGeneratedRule;
+          const parsed = parseSelector(rule.selector);
+          if (parsed.kind !== 'simple' || parsed.states.length > 0 || parsed.pseudoElement !== '') {
+            continue; // BASE-only, own-box utilities only
+          }
+          const className = unescapeClass(rule.selector);
+          if (className === null) continue;
+          const tuples: string[] = [];
+          const seen = new Set<string>();
+          for (const child of rule.nodes ?? []) {
+            if (child.type !== 'decl') continue;
+            const d = child as TwGeneratedDecl;
+            if (typeof d.value !== 'string') continue;
+            for (const decl of normalizer.normalizeDeclaration(d.prop, d.value, d.important === true)) {
+              const k = tupleKey(baseCk, String(decl.property), String(decl.value), decl.important);
+              if (!seen.has(k)) {
+                seen.add(k);
+                tuples.push(k);
+              }
+            }
+          }
+          if (tuples.length > 0) out.push({ token: className, tuples });
+        }
+      } catch {
+        /* leave vocab empty on failure — cover degrades to the greedy fallback */
+      }
+    }
+    this.#coverVocab = out;
+    return out;
+  }
+
+  /**
+   * Try the minimal-string exact-cover engine over the WHOLE utility vocabulary. On success the chosen
+   * set is verified by the mandatory CORRECTNESS BACKSTOP — re-resolve it and assert it reproduces the
+   * target's tuples EXACTLY — before it is returned; any mismatch (or no cover / oversize universe)
+   * yields `null` so {@link emit} uses its greedy fallback. Never returns a set that misrepresents `U`.
+   */
+  #tryCover(normalized: StyleMap, norm: EmitContext['normalizer']): EmitResult | null {
+    const universe = styleMapTuples(normalized, norm);
+    if (universe.length === 0) return { classes: [], exact: true, warnings: [] };
+    const chosen = minStringCover(universe, this.#buildCoverVocab());
+    if (!chosen || chosen.length === 0) return null;
+    const reTuples = new Set(styleMapTuples(this.resolve({ classes: chosen }).styles, norm));
+    if (reTuples.size !== universe.length) return null;
+    for (const t of universe) if (!reTuples.has(t)) return null;
+    return { classes: chosen, exact: true, warnings: [] };
+  }
+
   emit(styles: StyleMap, ctx: EmitContext): EmitResult {
     const norm = ctx.normalizer ?? normalizer;
     const normalized = norm.normalizeStyleMap(styles);
+
+    // Primary path: the provider-uniform minimal-string exact cover over the full vocabulary.
+    const cover = this.#tryCover(normalized, norm);
+    if (cover) return cover;
+
     const base = normalized.blocks.get(conditionKey(BASE_CONDITION));
     if (!base || base.decls.size === 0) return { classes: [], exact: true, warnings: [] };
 

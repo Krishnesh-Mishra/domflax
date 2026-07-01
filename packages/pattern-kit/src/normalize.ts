@@ -149,6 +149,18 @@ const BOX_SIDES: Readonly<Record<string, readonly [string, string, string, strin
   padding: ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],
   margin: ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'],
   inset: ['top', 'right', 'bottom', 'left'],
+  'scroll-margin': [
+    'scroll-margin-top',
+    'scroll-margin-right',
+    'scroll-margin-bottom',
+    'scroll-margin-left',
+  ],
+  'scroll-padding': [
+    'scroll-padding-top',
+    'scroll-padding-right',
+    'scroll-padding-bottom',
+    'scroll-padding-left',
+  ],
   'border-width': [
     'border-top-width',
     'border-right-width',
@@ -167,6 +179,44 @@ const BOX_SIDES: Readonly<Record<string, readonly [string, string, string, strin
     'border-bottom-color',
     'border-left-color',
   ],
+  // `border-radius` 1–4 value form maps to the four CORNERS (TL, TR, BR, BL) — the same positional
+  // pattern boxFourSides implements. Only the slash-free form is expanded (see expandShorthand).
+  'border-radius': [
+    'border-top-left-radius',
+    'border-top-right-radius',
+    'border-bottom-right-radius',
+    'border-bottom-left-radius',
+  ],
+};
+
+/** Two-axis shorthands whose 1–2 value form expands to an explicit [x/block-start, y/inline-…] pair. */
+const AXIS_PAIRS: Readonly<Record<string, readonly [string, string]>> = {
+  overflow: ['overflow-x', 'overflow-y'],
+  'overscroll-behavior': ['overscroll-behavior-x', 'overscroll-behavior-y'],
+  'place-items': ['align-items', 'justify-items'],
+  'place-content': ['align-content', 'justify-content'],
+  'place-self': ['align-self', 'justify-self'],
+};
+
+/**
+ * LOGICAL box shorthands (Tailwind v4 emits these for `px-*`/`py-*`/`mx-*`/`inset-x-*`, …). Their
+ * SINGLE-value form is direction-INDEPENDENT — `padding-inline: X` sets left AND right to the same `X`
+ * regardless of writing mode — so it is canonicalized to the physical side pair, letting the compress
+ * engine reconcile v4's `px-4 py-4` with the physical `p-4` (which expands via {@link BOX_SIDES}).
+ * A TWO-value logical form (`A B`) is direction-DEPENDENT (start/end ≠ left/right under RTL) and is
+ * left verbatim — Tailwind never generates it from a single utility, so no compression is lost.
+ */
+const LOGICAL_PAIRS: Readonly<Record<string, readonly [string, string]>> = {
+  'padding-inline': ['padding-left', 'padding-right'],
+  'padding-block': ['padding-top', 'padding-bottom'],
+  'margin-inline': ['margin-left', 'margin-right'],
+  'margin-block': ['margin-top', 'margin-bottom'],
+  'inset-inline': ['left', 'right'],
+  'inset-block': ['top', 'bottom'],
+  'scroll-padding-inline': ['scroll-padding-left', 'scroll-padding-right'],
+  'scroll-padding-block': ['scroll-padding-top', 'scroll-padding-bottom'],
+  'scroll-margin-inline': ['scroll-margin-left', 'scroll-margin-right'],
+  'scroll-margin-block': ['scroll-margin-top', 'scroll-margin-bottom'],
 };
 
 /** Split on top-level whitespace, keeping `fn(a, b)` groups intact. */
@@ -207,6 +257,10 @@ function boxFourSides(values: readonly string[]): [string, string, string, strin
 
 /** Expand one declaration into longhand `[property, value]` pairs (single pair if not shorthand). */
 function expandShorthand(prop: string, value: string): Array<[string, string]> {
+  // `border-radius` with a `/` carries distinct horizontal/vertical radii per corner — a shape our
+  // per-corner single-value longhands cannot represent — so it is left as the shorthand verbatim.
+  if (prop === 'border-radius' && value.includes('/')) return [[prop, value]];
+
   const box = BOX_SIDES[prop];
   if (box) {
     const parts = splitTopLevel(value);
@@ -214,6 +268,22 @@ function expandShorthand(prop: string, value: string): Array<[string, string]> {
       const sides = boxFourSides(parts);
       return box.map((p, i) => [p, sides[i]!] as [string, string]);
     }
+    return [[prop, value]];
+  }
+
+  const axis = AXIS_PAIRS[prop];
+  if (axis) {
+    const parts = splitTopLevel(value);
+    if (parts.length === 1) return [[axis[0], parts[0]!], [axis[1], parts[0]!]];
+    if (parts.length === 2) return [[axis[0], parts[0]!], [axis[1], parts[1]!]];
+    return [[prop, value]];
+  }
+
+  const logical = LOGICAL_PAIRS[prop];
+  if (logical) {
+    const parts = splitTopLevel(value);
+    // Only the direction-independent single-value form maps to physical sides (see LOGICAL_PAIRS).
+    if (parts.length === 1) return [[logical[0], parts[0]!], [logical[1], parts[0]!]];
     return [[prop, value]];
   }
 

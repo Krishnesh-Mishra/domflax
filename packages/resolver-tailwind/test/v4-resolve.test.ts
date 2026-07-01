@@ -66,8 +66,13 @@ describe.skipIf(projectRoot === null)('Tailwind v4 — real design-system resolu
     // non-empty computed style, so a `bg-white` box is never treated as inert).
     expect(val(styles, 'display')).toBe('flex');
     expect(val(styles, 'background-color')).toBe('var(--color-white)');
-    expect(val(styles, 'padding-inline')).toBe('calc(var(--spacing) * 4)');
-    expect(val(styles, 'padding-block')).toBe('calc(var(--spacing) * 4)');
+    // v4 `px-4`/`py-4` emit the LOGICAL `padding-inline`/`padding-block`; the shared normalizer folds
+    // their (direction-independent) single value down to the physical side longhands, so `p-4` (also
+    // physical) can reconcile with `px-4 py-4` during compress on v4 exactly as it does on v3.
+    expect(val(styles, 'padding-left')).toBe('calc(var(--spacing) * 4)');
+    expect(val(styles, 'padding-right')).toBe('calc(var(--spacing) * 4)');
+    expect(val(styles, 'padding-top')).toBe('calc(var(--spacing) * 4)');
+    expect(val(styles, 'padding-bottom')).toBe('calc(var(--spacing) * 4)');
     expect(val(styles, 'height')).toBe('calc(var(--spacing) * 10)');
     expect(val(styles, 'width')).toBe('calc(var(--spacing) * 10)');
   }, 60_000);

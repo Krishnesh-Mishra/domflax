@@ -198,10 +198,14 @@ describe('builtinPatterns registry (auto-generated)', () => {
 
   it('is ordered flatten-before-compress (sorted by category phase)', () => {
     const phases = builtinPatterns.map((p) => p.category.split('/', 1)[0]);
+    // Compress is now a single provider-uniform ENGINE (reverse-emit), not patterns — so the registry
+    // is flatten-only unless/until a compress pattern is (re)introduced. When both phases coexist,
+    // every flatten pattern must still precede every compress pattern.
     const lastFlatten = phases.lastIndexOf('flatten');
     const firstCompress = phases.indexOf('compress');
-    // Every flatten pattern must precede every compress pattern.
-    expect(lastFlatten).toBeLessThan(firstCompress);
+    if (lastFlatten !== -1 && firstCompress !== -1) {
+      expect(lastFlatten).toBeLessThan(firstCompress);
+    }
     expect(phases.every((ph) => ph === 'flatten' || ph === 'compress')).toBe(true);
   });
 });

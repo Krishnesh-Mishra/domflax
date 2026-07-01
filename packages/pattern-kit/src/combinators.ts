@@ -114,7 +114,12 @@ const VISUAL_PROPERTIES: ReadonlySet<string> = new Set<string>([
   'border-right-color',
   'border-bottom-color',
   'border-left-color',
-  'border-radius',
+  // `border-radius` is expanded to its four corner longhands by the shared normalizer, so the
+  // paint-establishing check must match those (a rounded wrapper still clips its background).
+  'border-top-left-radius',
+  'border-top-right-radius',
+  'border-bottom-right-radius',
+  'border-bottom-left-radius',
   'box-shadow',
   'outline',
   'outline-width',

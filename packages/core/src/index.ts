@@ -26,3 +26,6 @@ export * from './pipeline';
 
 // Runtime: the shared reverse-emit step (computed → className).
 export * from './reverse-emit';
+
+// Runtime: the provider-uniform minimal-string exact-cover compress engine.
+export * from './compress-engine';

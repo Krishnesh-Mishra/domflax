@@ -52,6 +52,7 @@ import type {
   CssProperty,
   EmitContext,
   IRDocument,
+  SafetyLevel,
   StyleBlock,
   StyleDecl,
   StyleMap,
@@ -114,9 +115,33 @@ function residualStyle(computed: StyleMap, covered: StyleMap, norm: StyleNormali
   return { blocks };
 }
 
+/** The rendered `class="…"` byte length of a token list (tokens joined by single spaces). */
+function joinedLength(tokens: readonly string[]): number {
+  if (tokens.length === 0) return 0;
+  let len = tokens.length - 1; // joining spaces
+  for (const t of tokens) len += t.length;
+  return len;
+}
+
+/** SafetyLevel a `compress/*` rewrite carried — an opaque (floor-0) element is off-limits to it. */
+const COMPRESS_FLOOR: SafetyLevel = 1;
+
 /**
- * Fold every STYLE-DIRTY, rewritable element's optimized computed style back into the MINIMAL static
- * class-token set (see module docs). Mutates `doc` in place.
+ * Fold each rewritable element's computed style back into the MINIMAL static class-token set — the
+ * general compress engine (see module docs + {@link import('./compress-engine')}). Mutates `doc`.
+ *
+ * TWO kinds of element are processed, and their guarantees differ:
+ *
+ *   • STYLE-DIRTY — a pass rewrote this element's own computed style (a flatten fold / merge). Its
+ *     computed CHANGED, so its classes MUST be re-derived to represent the new style (which may
+ *     legitimately need MORE tokens than before). Handled exactly as it always was.
+ *
+ *   • COMPRESS-ONLY — no pass touched it; we run the exact-cover engine purely to SHORTEN its class
+ *     string (`px-4 py-4 → p-4`, drop a redundant class, pick a custom class that covers the same
+ *     style, …). This is a pure class-string rewrite that must NEVER change the render or GROW the
+ *     output, so it carries two extra hard backstops below: the rewritten set must re-resolve to the
+ *     element's exact computed style, and it must not be longer than the original. A structural
+ *     bystander with no compression opportunity therefore keeps its `class` attribute byte-for-byte.
  */
 export function syncClassesFromComputed(
   doc: IRDocument,
@@ -124,19 +149,33 @@ export function syncClassesFromComputed(
   norm: StyleNormalizer,
 ): void {
   const sink = createSyntheticSink();
+  // A token is safe to drop/replace only when the resolver OWNS it (an unknown / JS-hook / typo class
+  // is preserved verbatim) AND its whole contribution is a plain, reproducible subject utility. Owning
+  // is checked explicitly so a custom-CSS resolver that has no usage record for an unknown token (its
+  // conservative default is "droppable") can never erase it.
+  const isDroppable = (t: string): boolean =>
+    resolver.owns(t) && resolver.selectorUsage(t).droppable;
+
   for (const id of elementIds(doc)) {
     const el = getElement(doc, id);
     if (!el) continue;
-    // Only re-derive classes for elements a pass actually rewrote the style of. A structural
-    // bystander (touched but not styleDirty) keeps its class attribute byte-for-byte identical.
-    if (!el.meta.styleDirty) continue;
     if (el.classes.opaque || el.classes.hasDynamic) continue;
 
+    const compressOnly = !el.meta.styleDirty;
+    // COMPRESS-ONLY mirrors the compress patterns' applier gate: an opaque (floor-0) element — an HTML
+    // `id`/`on*=`/`<script>` node, a synthetic wrapper — is never rewritten. STYLE-DIRTY elements were
+    // already rewritten by an op the applier authorized, so their floor is irrelevant here.
+    if (compressOnly && el.meta.safetyFloor < COMPRESS_FLOOR) continue;
+
     const tokens = staticTokensOf(el.classes);
+    if (tokens.length === 0) continue;
 
     // Tokens that are ALWAYS retained (unknown / opaque / variant / selector-bound). Their style is
     // subtracted from the computed map so we never re-emit a class for a property they already cover.
-    const retained = tokens.filter((t) => !resolver.selectorUsage(t).droppable);
+    const retained = tokens.filter((t) => !isDroppable(t));
+    // A pure-compress element with NOTHING droppable can never shorten — leave it byte-for-byte.
+    if (compressOnly && retained.length === tokens.length) continue;
+
     const covered = retained.length > 0 ? resolver.resolve({ classes: retained }).styles : null;
     const target = covered ? residualStyle(el.computed, covered, norm) : el.computed;
 
@@ -154,7 +193,7 @@ export function syncClassesFromComputed(
     //    selector-bound) or still part of the emitted minimal set — preserving source order.
     for (const t of tokens) {
       if (seen.has(t)) continue;
-      const keep = emittedSet.has(t) || !resolver.selectorUsage(t).droppable;
+      const keep = emittedSet.has(t) || !isDroppable(t);
       if (keep) {
         next.push(t);
         seen.add(t);
@@ -168,6 +207,15 @@ export function syncClassesFromComputed(
     }
 
     if (sameTokens(next, tokens)) continue; // no churn when nothing actually changed
+
+    if (compressOnly) {
+      // Hard correctness backstop for a pure compress: the rewritten token set must reproduce the
+      // element's EXACT computed style (never change a pixel) and must NOT be longer than the original
+      // (never inflate). Either failing ⇒ keep the original classes untouched.
+      if (!norm.equals(resolver.resolve({ classes: next }).styles, el.computed)) continue;
+      if (joinedLength(next) > joinedLength(tokens)) continue;
+    }
+
     el.classes = staticClassList(el.classes, next);
   }
 }
