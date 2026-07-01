@@ -192,6 +192,15 @@ export interface NodeMeta {
 
   // codegen
   touched: boolean;
+  /**
+   * A rewrite pass DIRECTLY rewrote THIS element's own computed style (setClassList / mergeStyle onto
+   * it / foldInheritedStyles into it). Distinct from {@link touched}, which is ALSO raised when a
+   * neighbour op (a child's `unwrap`, a sibling `mergeSiblings`/`moveNode`, an `insert`/`replaceWith`)
+   * marks this node as a structural bystander WITHOUT changing its computed. Reverse-emit re-derives
+   * class tokens ONLY for `styleDirty` elements, so a bystander keeps its `class` attribute byte-for-
+   * byte identical (it can never gain a redundant class it did not already carry).
+   */
+  styleDirty: boolean;
   synthetic: boolean;
   safetyFloor: SafetyLevel; // a pass with safety > floor may NOT modify this node
 }

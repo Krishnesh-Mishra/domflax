@@ -97,6 +97,7 @@ function elementWith(classes: ClassList, computed: StyleMap): { doc: ReturnType<
   const id = doc.alloc.next();
   const meta = defaultMeta(3);
   meta.touched = true;
+  meta.styleDirty = true; // reverse-emit only re-derives classes for style-dirty elements
   const el = createElement(id, { tag: 'div', parent: doc.root, classes, computed, meta });
   doc.nodes.set(id, el);
   const root = doc.nodes.get(doc.root);
@@ -144,5 +145,60 @@ describe('syncClassesFromComputed — REPLACE with droppability gate', () => {
 
     const tokens = el.classes.segments.flatMap((s) => (s.kind === 'static' ? s.tokens.map((t) => t.value) : []));
     expect(tokens).toEqual(['px-4', 'py-4']);
+  });
+
+  it('leaves a STRUCTURAL BYSTANDER (touched but not styleDirty) byte-for-byte identical', () => {
+    // A `.product-art` whose only "touch" was a neighbour's flatten: its computed never changed, so
+    // even though emit WOULD synthesize `bg-cream-deep`, reverse-emit must not run on it at all.
+    const { doc, el } = elementWith(staticClasses('product-art'), styleMap([['background', '#efe9dd']]));
+    el.meta.styleDirty = false; // structural bystander — computed was NOT rewritten by any pass
+
+    syncClassesFromComputed(doc, stubResolver(['bg-cream-deep'], new Set()), idNormalizer);
+
+    const tokens = el.classes.segments.flatMap((s) => (s.kind === 'static' ? s.tokens.map((t) => t.value) : []));
+    expect(tokens).toEqual(['product-art']); // unchanged — no redundant class added
+  });
+
+  it('never re-emits a class whose contribution a RETAINED class already covers', () => {
+    // `.product-art` (non-droppable — selector-bound) already sets background:#efe9dd. Even on a
+    // style-dirty element, the redundant `.bg-cream-deep` alternative must NOT be materialized, because
+    // its declaration is already supplied by the retained class → the residual to emit is empty.
+    const backgroundMap = styleMap([['background', '#efe9dd']]);
+    const coveringResolver: StyleResolver = {
+      id: 'stub',
+      provider: 'stub',
+      fingerprint: 'stub',
+      owns: () => true,
+      // `.product-art` resolves to exactly the element's background.
+      resolve: (i: ResolveInput): ResolveResult => ({
+        styles: i.classes.includes('product-art') ? backgroundMap : styleMap([]),
+        resolved: [...i.classes],
+        unknown: [],
+        opaque: [],
+        warnings: [],
+      }),
+      // If asked to reverse a NON-empty map, it would offer the redundant `bg-cream-deep`.
+      emit: (s: StyleMap, _c: EmitContext): EmitResult => ({
+        classes: s.blocks.size > 0 ? ['bg-cream-deep'] : [],
+        exact: true,
+        warnings: [],
+      }),
+      // `product-art` is selector-bound (non-droppable, retained); everything else is droppable.
+      selectorUsage: (token: string): SelectorUsage => ({
+        asSubject: true,
+        asAncestor: token === 'product-art',
+        asCompound: false,
+        asSibling: false,
+        asHasArgument: false,
+        asStructural: false,
+        droppable: token !== 'product-art',
+      }),
+    };
+
+    const { doc, el } = elementWith(staticClasses('product-art'), backgroundMap);
+    syncClassesFromComputed(doc, coveringResolver, idNormalizer);
+
+    const tokens = el.classes.segments.flatMap((s) => (s.kind === 'static' ? s.tokens.map((t) => t.value) : []));
+    expect(tokens).toEqual(['product-art']); // residual empty → nothing emitted, no inflation
   });
 });

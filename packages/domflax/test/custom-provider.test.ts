@@ -22,6 +22,7 @@ import { createDomflax } from '../src/index';
 let dir: string;
 let centerCss: string;
 let combinatorCss: string;
+let inflateCss: string;
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'domflax-custom-'));
@@ -37,6 +38,23 @@ beforeAll(() => {
   writeFileSync(
     combinatorCss,
     '.list > .item h3 { color: red }\n.item { display:flex; align-items:center; justify-content:center }\n',
+    'utf8',
+  );
+
+  // Reverse-emit inflation repro: `.bg-cream-deep` is a redundant ALTERNATIVE to `.product-art`'s
+  // background (declared FIRST, so the greedy reverse cover would pick it). `.product-art` is
+  // selector-bound (compound `.product-art.bordered`) → non-droppable/retained. `.passthrough` is an
+  // inert display:contents wrapper that flattens (a genuine node-removal win on the same document).
+  inflateCss = join(dir, 'inflate.css');
+  writeFileSync(
+    inflateCss,
+    [
+      '.bg-cream-deep { background:#efe9dd }',
+      '.product-art { background:#efe9dd }',
+      '.product-art.bordered { border:1px solid #000 }',
+      '.passthrough { display:contents }',
+      '',
+    ].join('\n'),
     'utf8',
   );
 });
@@ -96,5 +114,55 @@ describe('custom provider — T4 selector safety (combinator dependents preserve
     expect(out).toContain('justify-center');
     expect(out).not.toContain('place-self-center');
     expect(out).toContain('bg-red-200');
+  });
+});
+
+/* ───────────── reverse-emit must never INFLATE an unchanged element (byte-identical bystander) ───────────── */
+
+describe('custom provider — unchanged elements stay byte-identical (no inflation)', () => {
+  it('HTML: a bystander .product-art keeps its class byte-identical while its inert child flattens', () => {
+    // `.product-art` is touched ONLY as a structural bystander (its inert `.passthrough` child is
+    // flattened). Its computed never changes, so it must NOT gain the redundant `.bg-cream-deep`
+    // (pre-fix, the greedy reverse cover appended it since `.bg-cream-deep` is declared first).
+    const src =
+      '<div class="product-art"><div class="passthrough"><img src="a.png"></div></div>';
+    const { code: out } = createDomflax({ provider: 'custom', cssFiles: [inflateCss] }).transform(
+      src,
+      'index.html',
+    );
+
+    // 1. Unchanged element is byte-identical — NO redundant class was added.
+    expect(out).toContain('class="product-art"');
+    expect(out).not.toContain('bg-cream-deep');
+    // 2. The inert display:contents wrapper still flattens (its child is hoisted) — a genuine win.
+    expect(out).not.toContain('passthrough');
+    expect(out).toContain('<img');
+    expect(out).toBe('<div class="product-art"><img src="a.png"></div>');
+  });
+
+  it('JSX: same invariants — bystander byte-identical, inert wrapper flattens', () => {
+    const code =
+      'export default function G(){return (' +
+      '<div className="product-art"><div className="passthrough"><img src="a.png"/></div></div>' +
+      ');}';
+    const { code: out } = createDomflax({ provider: 'custom', cssFiles: [inflateCss] }).transform(
+      code,
+      'G.tsx',
+    );
+
+    expect(out).toContain('className="product-art"');
+    expect(out).not.toContain('bg-cream-deep');
+    expect(out).not.toContain('passthrough');
+    expect(out).toContain('<img');
+  });
+
+  it('a genuine compression (Tailwind sibling) is unaffected by the no-inflation fix', () => {
+    // Invariant #3: the fix narrows reverse-emit to style-dirty elements but must not disable a real
+    // compression. A Tailwind px-4 py-4 element still folds to the single p-4.
+    const { code: out } = createDomflax().transform('<div className="px-4 py-4 bg-white">x</div>', 'S.tsx');
+    expect(out).toContain('p-4');
+    expect(out).not.toContain('px-4');
+    expect(out).not.toContain('py-4');
+    expect(out).toContain('bg-white');
   });
 });

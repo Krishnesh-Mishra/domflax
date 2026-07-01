@@ -134,6 +134,21 @@ export function markTouched(state: MutState, id: IRNodeId): void {
   }
 }
 
+/**
+ * Mark a node whose OWN computed style a pass just rewrote (setClassList / mergeStyle onto it /
+ * fold into it). Implies {@link markTouched}, and additionally raises `meta.styleDirty` — the signal
+ * reverse-emit uses to re-derive class tokens. A purely structural bystander (a neighbour's unwrap /
+ * merge / move) uses {@link markTouched} instead, so it is left byte-for-byte identical.
+ */
+export function markStyleDirty(state: MutState, id: IRNodeId): void {
+  const n = state.doc.nodes.get(id);
+  if (n) {
+    n.meta.touched = true;
+    n.meta.styleDirty = true;
+    state.touched.add(id);
+  }
+}
+
 export function removeSubtree(state: MutState, id: IRNodeId): void {
   const node = state.doc.nodes.get(id);
   if (!node) return;

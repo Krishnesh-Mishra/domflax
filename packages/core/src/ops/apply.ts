@@ -30,6 +30,7 @@ import {
   elementSpecToNode,
   getParentChildren,
   isInherited,
+  markStyleDirty,
   markTouched,
   materialize,
   mergeStyleMaps,
@@ -205,7 +206,7 @@ function applyOne(state: MutState, op: RewriteOp): Diagnostic[] {
         return [precond(op, op.target, 'setClassList target is not an element')];
       }
       el.computed = cloneStyleMap(op.style);
-      markTouched(state, op.target);
+      markStyleDirty(state, op.target);
       return [];
     }
 
@@ -229,7 +230,7 @@ function applyOne(state: MutState, op: RewriteOp): Diagnostic[] {
         const src = doc.nodes.get(op.source);
         if (src) markTouched(state, op.source);
       }
-      markTouched(state, op.target);
+      markStyleDirty(state, op.target);
       return [];
     }
 
@@ -297,7 +298,7 @@ function applyFold(
 
     if (folded) {
       into.computed = { blocks: nextBlocks };
-      markTouched(state, intoId);
+      markStyleDirty(state, intoId);
     }
   }
   // Non-blocking (DF_RELATIVE_UNIT_FOLD) diagnostics are recorded but do not skip the op.

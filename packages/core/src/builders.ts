@@ -122,6 +122,7 @@ export function defaultMeta(safetyFloor: SafetyLevel = 0): NodeMeta {
     declaresCustomProperties: false,
     whitespaceSensitive: false,
     touched: false,
+    styleDirty: false,
     synthetic: false,
     safetyFloor,
   };
