@@ -4,7 +4,7 @@
 
 `domflax` analyzes your JSX **and HTML** at build time and rewrites it to a smaller equivalent:
 
-1. **Compress** — collapses verbose class sets into their shortest equivalents (`px-4 py-4 mt-2 mb-2` → `p-4 my-2`, `h-10 w-10` → `size-10`).
+1. **Compress** — a general engine rewrites each element's classes to the **shortest set that produces the same computed style** (`px-4 py-4 mt-2 mb-2` → `p-4 my-2`, `h-10 w-10` → `size-10`). One algorithm across **Tailwind v3, Tailwind v4, and custom CSS** — no per-utility patterns.
 2. **Flatten** — removes wrapper elements that are *provably inert* (they add no layout and paint nothing).
 
 Matching happens on **computed styles**, not raw class names — so the rules work across Tailwind, custom CSS, and (later) other providers, and a Tailwind class and an equivalent custom class compress the same way.
@@ -27,7 +27,7 @@ It rewrites only the **static shape** of your markup. Dynamic class lists (`clas
 - **Flattening is conservative.** A wrapper is removed only when removal is *provably* render-neutral — it establishes no layout context and has no style to reproduce on its child. A `flex`/`grid` **centering** wrapper is removed only when its parent is statically `display:grid` (so `place-self:center` is provably equivalent — Chromium-verified); a flex/block/unknown parent leaves it preserved. It never drops a style it can't reproduce, and never touches a wrapper a CSS selector depends on (`.list > .item h3`).
 - domflax runs as a **purely static** source transform. It never launches a browser, so builds stay fast and deterministic.
 
-> **Status: v0.1.4.** Optimizes real `.jsx`/`.tsx` **and `.html`** — component-return position, inside `.map()`/expressions, and whole static-HTML sites — via Vite, Next.js (webpack), and the CLI, with Tailwind and custom-CSS providers. 22 patterns. Compression works everywhere (incl. dynamic content); inert-wrapper flatten removes nodes; centering wrappers flatten where it's *provably* render-identical (a `grid` parent). The CLI batches large sites across CPU cores with a **memory-bounded worker pool** (`--max-memory`, never OOM), and **auto-detects each HTML page's own `<link>` stylesheets**. Still **static-only — never launches a browser** during a build. APIs may change before 1.0.
+> **Status: v0.2.0.** Optimizes real `.jsx`/`.tsx` **and `.html`** — component-return, inside `.map()`/expressions, and whole static-HTML sites — via Vite, Next.js (webpack), and the CLI. **Compression is one general engine** that emits the shortest class set reproducing each element's computed style, uniformly across **Tailwind v3, Tailwind v4, and custom CSS** (it re-resolves the result and verifies it's identical before emitting). **Flattening** is a lean set of provably-safe structural patterns (inert wrappers + grid-parent centering). **Static-only — never launches a browser** during a build; a Tailwind project it can't resolve is left untouched, never broken. The CLI batches large sites across CPU cores (`--max-memory`, never OOM) and auto-detects each HTML page's own `<link>` stylesheets; the Vite/Next plugins print a build-end optimization summary. APIs may change before 1.0.
 
 ## Install
 
@@ -67,9 +67,21 @@ module.exports = {
 
 > domflax runs as a **source transform** on your `.jsx`/`.tsx` files via the bundler — it never touches a framework's shipped `index.html`. Use `next build` (webpack); **Turbopack is not supported yet** (it doesn't accept arbitrary webpack loaders).
 
+At the end of the build both plugins print a one-box summary of what domflax did:
+
+```
+  ▲ domflax
+  ────────────────────────────────
+   files optimized     42
+   DOM nodes removed   318
+   classes compressed  1,204
+   size saved          18.7 KB
+  ────────────────────────────────
+```
+
 ### Tailwind (auto-detected)
 
-When `tailwindcss` is present, `provider: 'auto'` resolves classes through the real Tailwind engine and emits the shortest equivalent Tailwind classes back. `tailwindcss` is an optional peer, loaded from your project only when used.
+When `tailwindcss` is present, `provider: 'auto'` resolves classes through your project's real Tailwind engine — **Tailwind v3 and v4 are both supported** — and emits the shortest equivalent classes back. `tailwindcss` is an optional peer, loaded from your project only when used. A Tailwind version domflax can't resolve is left untouched (never broken).
 
 ### Custom CSS files
 
@@ -100,6 +112,7 @@ npx domflax ./src --out ./domflax-out
 | `--max-memory <MB>` | Cap total RAM — and thus worker parallelism. Default ≈ 70% of free RAM; low values run slower but never OOM. |
 | `--concurrency <N>` | Cap worker count (memory always wins). |
 | `--dry-run` | Preview changes, write nothing. |
+| `--details` | Print per-file optimization stats (nodes / classes / bytes). |
 | `--dangerously-overwrite-source` | Allow in-place source rewrite (needs clean git). |
 
 ### HTML & static sites
@@ -117,26 +130,33 @@ npx domflax ./dist --provider custom --out ./dist-optimized
 
 ## Writing a pattern
 
-Patterns are how domflax knows what's safe to rewrite. Each is a **single declarative file** — the definition and its tests live in one `definePattern` call, with no separate test file and no manual registration:
+Compression is a general engine — there are **no per-utility compress patterns**. Patterns are for **flattening**: each is a single declarative file whose definition and tests live in one `definePattern` call, auto-discovered, with no manual registration:
 
 ```ts
-import { definePattern } from 'domflax/pattern-kit'
+import { definePattern, not, hasDynamicClasses } from 'domflax/pattern-kit'
 
 export default definePattern({
-  name: 'padding-shorthand',
-  category: 'compress/padding-shorthand',
-  safety: 1,
-  doc: { summary: 'Equal/paired padding longhands collapse to the shortest shorthand.' },
-  // a compress recipe rewrites only the element's own class list (declines with null otherwise)
-  rewrite: { rewriteClasses: (computed) => foldPadding(computed) },
+  name: 'display-contents-wrapper',
+  category: 'flatten/wrapper/display-contents-wrapper',
+  safety: 2,
+  doc: { summary: 'A display:contents wrapper generates no box — unwrap it into its sole child.' },
+  match: {
+    tag: 'div',
+    style: { display: 'contents' },
+    onlyChild: 'element',
+    paintsNothing: true,
+    where: [not(hasDynamicClasses)],
+  },
+  rewrite: { flattenInto: 'child' },
   test: {
-    cases:   [{ before: '<div className="px-4 py-4">{x}</div>', after: '<div className="p-4">{x}</div>' }],
-    noMatch: ['<div className="pt-2 pr-4 pb-8 pl-4">box</div>'],
+    cases:   [{ before: '<div className="contents"><a className="text-blue-500">L</a></div>',
+                after:  '<a className="text-blue-500">L</a>' }],
+    noMatch: ['<div className="contents" ref={r}><a>L</a></div>'],
   },
 })
 ```
 
-Drop the file under `src/library/**` as `*.pattern.ts` and it's **auto-discovered**. The generic harness runs every pattern's `test` cases through the *real* transform, plus an automatic invariant suite (purity, opacity-barrier safety, id-preservation, fixpoint termination) — so a new pattern is wired, tested, and proven sound with zero boilerplate. Flatten patterns auto-receive the opacity + selector-safety guards; compress patterns are gated only on dynamic / selector-bound classes.
+Drop the file under `src/library/**` as `*.pattern.ts` and it's **auto-discovered**. The generic harness runs its `test` cases through the *real* transform, plus an automatic invariant suite (purity, opacity-barrier safety, id-preservation, fixpoint termination). Every `flatten/*` pattern auto-receives the opacity + selector-safety guards, and the conservative safety gate only commits a removal it can *prove* is render-neutral — so a pattern can never produce unsafe output.
 
 ## Advanced entry points
 
@@ -155,12 +175,14 @@ Runnable examples live in [`examples/`](./examples): `vite-react-tailwind`, `vit
 
 - [x] Monorepo + single bundled package
 - [x] Core engine (IR, pass manager, surgical full-module codegen)
-- [x] Declarative `definePattern({ …, test })` + auto-discovery; 22 flatten/compress patterns
+- [x] Declarative `definePattern({ …, test })` + auto-discovery (flatten patterns)
+- [x] General minimal-string compress **engine** — Tailwind v3 + v4 + custom CSS (no per-utility patterns)
+- [x] Tailwind **v4** support + fail-safe (classes it can't resolve are never flattened)
 - [x] Real Tailwind engine + custom-CSS resolvers
 - [x] CSS selector-safety + residual-skip (don't break `div div h1`; never drop un-reproducible styles)
 - [x] Compression across dynamic content (refs / handlers / `{expr}` children)
 - [x] Optimize JSX inside `.map()` / expressions (list rows)
-- [x] Vite + Next.js (webpack) adapters + CLI (folders, wizard, output-safety)
+- [x] Vite + Next.js (webpack) adapters + CLI (folders, wizard, output-safety, build-end summary)
 - [x] Standalone equivalence verifier (Playwright, opt-in)
 - [x] HTML frontend (`.html`/`.htm`, parse5 + surgical span edits) with per-page `<link>` CSS auto-detection
 - [x] Context-aware centering-wrapper flatten (provably safe under a `grid` parent, Chromium-verified)
