@@ -11,3 +11,4 @@
 
 export { jsxFrontend, createJsxFrontend } from './frontend';
 export { jsxBackend, createJsxBackend } from './backend';
+export { DEFAULT_CLASS_CALLEES } from './frontend-classlist';

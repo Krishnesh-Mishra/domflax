@@ -9,10 +9,12 @@
  * slice as payload), and only its source span survives in the tree.
  *
  * Static `class`/`className` literals are split into {@link ClassToken}s on a static
- * {@link ClassSegment}; a non-string-literal className becomes a single dynamic segment
- * (opaque, never optimized). Static classes are resolved through the supplied
- * {@link StyleResolver} + {@link StyleNormalizer} into `element.computed` so downstream
- * patterns can match on resolved style.
+ * {@link ClassSegment}; recognized `cn()`/`clsx()`/template-literal expressions are split into
+ * mixed static/dynamic segments (STATIC EXTRACTION — see `./frontend-classlist`); any other
+ * dynamic className becomes a single opaque dynamic segment. Static class tokens (including the
+ * static segments of a mixed list) are resolved through the supplied {@link StyleResolver} +
+ * {@link StyleNormalizer} into `element.computed` so downstream patterns can match on resolved
+ * style — for a mixed list that computed is PARTIAL, and the element stays opaque for flatten.
  *
  * NodeMeta opacity barriers populated here: hasRef (`ref=`), hasEventHandlers (`on*=`),
  * hasKey (`key=`), hasSpreadAttrs (`{...x}`), hasDangerousHtml
@@ -27,7 +29,6 @@ import type {
   Expression,
   JSXAttribute,
   JSXElement,
-  JSXEmptyExpression,
   JSXFragment,
   JSXOpeningElement,
   Node as BabelNode,
@@ -37,8 +38,6 @@ import type {
   AttrMap,
   AttrValue,
   ClassList,
-  ClassSegment,
-  ClassToken,
   Diagnostic,
   ExprRef,
   FrontendParseContext,
@@ -69,13 +68,14 @@ import type { ExprPayload } from './frontend-ast';
 import {
   FILE_ID,
   attrName,
-  classFormOf,
   exprKind,
   findNestedJsxRoots,
   isComponentName,
   jsxName,
   traverse,
 } from './frontend-ast';
+import type { ClassListHelpers } from './frontend-classlist';
+import { DEFAULT_CLASS_CALLEES, buildClassList } from './frontend-classlist';
 
 export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
   const diagnostics: Diagnostic[] = [];
@@ -118,8 +118,8 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
   const sliceOf = (node: BabelNode): string =>
     node.start == null || node.end == null ? '' : code.slice(node.start, node.end);
 
-  /** Intern an expression as an opaque ExprRef, recording its verbatim source slice. */
-  const internExpr = (node: Expression | JSXEmptyExpression, spread: boolean): ExprRef => {
+  /** Intern any node as an opaque ExprRef, recording its verbatim source slice. */
+  const internExpr = (node: BabelNode, spread: boolean): ExprRef => {
     const payload: ExprPayload = { text: sliceOf(node), spread };
     return doc.exprs.intern({
       span: spanOf(node) ?? { file: FILE_ID, start: 0, end: 0 },
@@ -128,59 +128,18 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
     });
   };
 
-  /* ----- class list ----- */
+  /* ----- class list (lowering lives in ./frontend-classlist) ----- */
 
-  const splitTokens = (raw: string): ClassToken[] =>
-    raw
-      .split(/\s+/)
-      .filter((t) => t.length > 0)
-      .map((value) => ({ value }) as ClassToken);
-
-  const buildClassList = (attr: JSXAttribute): ClassList => {
-    const attrSpan = spanOf(attr) ?? undefined;
-    const v = attr.value;
-
-    const staticList = (tokens: ClassToken[], valueSpan: SourceSpan | null): ClassList => {
-      const seg: ClassSegment = { kind: 'static', span: valueSpan ?? undefined, tokens };
-      return {
-        form: 'string-literal',
-        segments: [seg],
-        valueSpan,
-        attrSpan,
-        hasDynamic: false,
-        opaque: false,
-        rewritable: true,
-      };
-    };
-
-    if (v == null) return staticList([], null);
-
-    if (v.type === 'StringLiteral') {
-      return staticList(splitTokens(v.value), spanOf(v));
-    }
-
-    if (v.type === 'JSXExpressionContainer') {
-      const expr = v.expression;
-      // `className={"a b"}` is still a static string literal.
-      if (expr.type === 'StringLiteral') {
-        return staticList(splitTokens(expr.value), spanOf(expr));
-      }
-      if (expr.type === 'JSXEmptyExpression') return staticList([], null);
-      const ref = internExpr(expr, false);
-      const valueSpan = spanOf(expr);
-      const seg: ClassSegment = { kind: 'dynamic', span: valueSpan ?? undefined, expr: ref };
-      return {
-        form: classFormOf(expr),
-        segments: [seg],
-        valueSpan,
-        attrSpan,
-        hasDynamic: true,
-        opaque: true,
-        rewritable: false,
-      };
-    }
-
-    return emptyClassList();
+  const configCallees = ctx.config['classCallees'];
+  const classListHelpers: ClassListHelpers = {
+    spanOf,
+    slice: (start, end) => code.slice(start, end),
+    internNode: internExpr,
+    callees: new Set(
+      Array.isArray(configCallees) && configCallees.every((c) => typeof c === 'string')
+        ? (configCallees as string[])
+        : DEFAULT_CLASS_CALLEES,
+    ),
   };
 
   const staticTokensOf = (classes: ClassList): string[] => {
@@ -314,7 +273,7 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
       }
       const name = attrName(attr.name);
       if (name === 'className' || name === 'class') {
-        classes = buildClassList(attr);
+        classes = buildClassList(attr, classListHelpers);
         continue;
       }
       if (name === 'ref') meta.hasRef = true;
@@ -338,8 +297,12 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
     }
 
     // Resolve static classes (+ tag) into computed style via the injected resolver/normalizer.
+    // For a MIXED (cn()/template) list only the STATIC segments' tokens resolve here, so computed is
+    // PARTIAL — safe because `classes.hasDynamic` keeps the element opaque for flatten, and the
+    // segment-local compress re-resolves each segment's own tokens independently. Partial computed
+    // only ever ADDS style facts, which is strictly more conservative for the flatten guards.
     let computed: StyleMap = emptyStyleMap();
-    if (!classes.hasDynamic) {
+    {
       const tokens = staticTokensOf(classes);
       if (tokens.length > 0) {
         const res = ctx.resolver.resolve({

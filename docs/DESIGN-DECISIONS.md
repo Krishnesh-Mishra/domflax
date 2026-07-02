@@ -329,3 +329,37 @@ removable, classes compressible, bytes savable) and the top 5 worst files by sav
   audit mode they simply skip the write, so large batches stay parallel.
 - **Safety:** audit forces dry-run semantics (no write plan is exercised, the overwrite git gate is
   moot) and the wizard offers it as an output mode ("Audit — score only, write nothing").
+
+## K. Static extraction for dynamic classNames (0.3.0 round 2)
+
+### Q27. Can `className={cn("px-4 py-4", cond && "bg-red-500")}` / template-literal classNames be compressed at all, given they're dynamic?
+**Decision:** Yes — **segment-locally**. A recognized class-combiner call (`cn`, `clsx`,
+`classNames`, `classnames`, `twMerge`, `twJoin`; overridable via frontend config `classCallees` —
+`cva` deliberately excluded, its args are variant configs) or an untagged template literal is
+lowered into MIXED segments: each plain string-literal argument / template quasi becomes a STATIC
+segment with a precise splice span (string CONTENTS, quotes/backticks/`${}` excluded); every other
+argument and every `${expr}` hole stays a DYNAMIC segment (opaque, byte-preserved). In shadcn-style
+apps ~25 % of classNames are this shape with mostly-static tokens.
+
+- **Order-safety rule (the correctness core):** `cn`/`twMerge` resolve conflicts by ORDER (later
+  wins) and any dynamic segment can add/override classes at runtime. So a rewrite happens ONLY
+  within one static segment, replacing its tokens with a shorter set that **re-resolves to exactly
+  the same computed style** (normalizer.equals backstop) in the **same argument position** —
+  `cn("px-4 py-4", cond && "p-2")` → `cn("p-4", cond && "p-2")` keeps every later-wins
+  relationship. Never merge across segments, never reorder segments, never touch dynamic segments,
+  never emit a longer set.
+- **Flatten stays blocked:** the mixed list keeps `hasDynamic: true` (full class set unknown), so
+  `hasDynamicClasses`-gated flatten patterns and the whole-element compress path skip the element
+  exactly as before. Static tokens DO resolve onto `computed` now (partial style) — only ever
+  ADDING style facts, which is strictly more conservative for the flatten guards.
+- **When in doubt, bytes untouched:** a segment with an unresolved token (`js-hook`, typo,
+  undriveable Tailwind) is skipped whole; non-droppable tokens (variants, selector-bound) are
+  retained verbatim with the residual-subtraction emit compressing around them; string literals
+  with escape sequences and template quasis with a partial token at a `${}` boundary
+  (`` `px-${n}` ``) are demoted to dynamic; an unknown wrapper fn (`myCn(...)`) stays fully opaque.
+- **Placement:** frontend split lives in `@domflax/frontend-jsx/frontend-classlist`; the
+  segment-local compress in `@domflax/core/segment-compress`, invoked from
+  `syncClassesFromComputed` — so the meta package, the build plugins, and the CLI all get it from
+  the one shared reverse-emit step. The JSX backend splices each rewritten segment via its own
+  span, preserving the segment's leading/trailing whitespace (a template chunk's boundary space is
+  the token separator against the neighbouring `${expr}`).

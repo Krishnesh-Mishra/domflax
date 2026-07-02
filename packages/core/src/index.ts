@@ -27,5 +27,8 @@ export * from './pipeline';
 // Runtime: the shared reverse-emit step (computed → className).
 export * from './reverse-emit';
 
+// Runtime: segment-local static extraction for mixed (cn()/template) class lists.
+export * from './segment-compress';
+
 // Runtime: the provider-uniform minimal-string exact-cover compress engine.
 export * from './compress-engine';

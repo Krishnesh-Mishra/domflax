@@ -40,22 +40,30 @@
  * droppable and are preserved verbatim. As a safety net, if the residual `emit` produces nothing at
  * all we leave the element's tokens untouched (a resolver that failed to load must never erase
  * classes).
+ *
+ * ## Mixed (cn()/template) class lists — segment-local static extraction
+ *
+ * An element whose className mixes static string chunks with dynamic expressions is NEVER processed
+ * by the whole-element path above (its full class set is unknown). Instead its rewritable static
+ * segments are compressed individually by {@link import('./segment-compress').compressStaticSegments}
+ * (invoked first, below) — order-safe, dynamic parts byte-preserved.
  */
 
 import { elementIds, getElement } from './builders';
 import { createSyntheticSink } from './pipeline';
+import {
+  COMPRESS_FLOOR,
+  compressStaticSegments,
+  joinedLength,
+  residualStyle,
+  sameTokens,
+} from './segment-compress';
 import type {
   ClassList,
   ClassSegment,
   ClassToken,
-  ConditionKey,
-  CssProperty,
   EmitContext,
   IRDocument,
-  SafetyLevel,
-  StyleBlock,
-  StyleDecl,
-  StyleMap,
   StyleNormalizer,
   StyleResolver,
 } from './types';
@@ -84,48 +92,6 @@ function staticClassList(prev: ClassList, tokens: readonly string[]): ClassList 
   };
 }
 
-/** Two token lists are equal iff same length and same tokens in the same order. */
-function sameTokens(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
-  return true;
-}
-
-/**
- * Return the RESIDUAL of `computed` after removing every declaration the element's retained classes
- * already reproduce EXACTLY (same value + `!important`, in the same style condition). What's left is
- * the set of declarations the emitted classes must actually cover — so reverse-emit never re-adds a
- * utility for a property a kept class already supplies. A declaration whose retained-class value
- * DIFFERS from the computed one (i.e. the class was overridden) is kept in the residual: the final
- * value still has to be emitted by something.
- */
-function residualStyle(computed: StyleMap, covered: StyleMap, norm: StyleNormalizer): StyleMap {
-  const cov = norm.normalizeStyleMap(covered);
-  const blocks = new Map<ConditionKey, StyleBlock>();
-  for (const [key, block] of norm.normalizeStyleMap(computed).blocks) {
-    const covBlock = cov.blocks.get(key);
-    const decls = new Map<CssProperty, StyleDecl>();
-    for (const [prop, decl] of block.decls) {
-      const covDecl = covBlock?.decls.get(prop);
-      if (covDecl && covDecl.value === decl.value && covDecl.important === decl.important) continue;
-      decls.set(prop, decl);
-    }
-    if (decls.size > 0) blocks.set(key, { condition: block.condition, decls });
-  }
-  return { blocks };
-}
-
-/** The rendered `class="…"` byte length of a token list (tokens joined by single spaces). */
-function joinedLength(tokens: readonly string[]): number {
-  if (tokens.length === 0) return 0;
-  let len = tokens.length - 1; // joining spaces
-  for (const t of tokens) len += t.length;
-  return len;
-}
-
-/** SafetyLevel a `compress/*` rewrite carried — an opaque (floor-0) element is off-limits to it. */
-const COMPRESS_FLOOR: SafetyLevel = 1;
-
 /**
  * Fold each rewritable element's computed style back into the MINIMAL static class-token set — the
  * general compress engine (see module docs + {@link import('./compress-engine')}). Mutates `doc`.
@@ -148,6 +114,11 @@ export function syncClassesFromComputed(
   resolver: StyleResolver,
   norm: StyleNormalizer,
 ): void {
+  // STATIC EXTRACTION for mixed (cn()/clsx()/template-literal) class lists: compress each provably-
+  // static segment IN PLACE (segment-local, order-safe — see ./segment-compress). Fully-dynamic /
+  // opaque lists and every dynamic segment are untouched; such elements stay opaque for flatten.
+  compressStaticSegments(doc, resolver, norm);
+
   const sink = createSyntheticSink();
   // A token is safe to drop/replace only when the resolver OWNS it (an unknown / JS-hook / typo class
   // is preserved verbatim) AND its whole contribution is a plain, reproducible subject utility. Owning

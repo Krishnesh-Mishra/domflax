@@ -225,6 +225,14 @@ export interface ClassToken {
   readonly span?: SourceSpan;
 }
 
+/**
+ * One segment of a class list. A STATIC segment whose `span` is set inside a `hasDynamic` list is
+ * SURGICALLY REWRITABLE: the span is the exact splice region for the segment's token text — the
+ * string literal's CONTENTS (quotes excluded) for a `cn("…")` argument, or one template-literal
+ * quasi chunk (backticks/`${` excluded). The backend overwrites ONLY that region, preserving the
+ * segment's leading/trailing whitespace, so every dynamic part stays byte-for-byte identical.
+ * A static segment WITHOUT a span is never rewritten.
+ */
 export type ClassSegment =
   | { readonly kind: 'static'; readonly span?: SourceSpan; readonly tokens: readonly ClassToken[] }
   | { readonly kind: 'dynamic'; readonly span?: SourceSpan; readonly expr: ExprRef };
@@ -240,6 +248,12 @@ export interface ClassList {
   readonly hasDynamic: boolean;
   readonly opaque: boolean;     // wholly dynamic/spread-derived → never optimize
   readonly rewritable: boolean; // >=1 static segment AND splice-safe
+  /**
+   * The WHOLE dynamic className expression (`cn(…)` call / template literal) interned verbatim, set
+   * when the frontend split it into mixed static/dynamic segments. Used only by the structural
+   * re-print fallback so a multi-segment list is reproduced as its original expression.
+   */
+  readonly wholeExpr?: ExprRef;
 }
 
 export type AttrValue =

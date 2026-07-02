@@ -115,13 +115,51 @@ interface RemovedRegion {
   readonly unwrapped: boolean;
 }
 
+/** Same-length, same-order token-list equality. */
+function sameTokenList(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * STATIC EXTRACTION printing: splice each rewritten STATIC segment of a mixed (cn()/template) class
+ * list via its own span — the string literal's contents / the template quasi chunk — preserving the
+ * segment's leading/trailing whitespace (a template chunk's boundary space is a token separator
+ * against the neighbouring `${expr}` and MUST survive). Dynamic segments are never touched, so every
+ * byte outside the rewritten chunks stays identical. Returns true if any edit was made.
+ */
+function editStaticSegments(ms: MagicString, sf: SourceFile, classes: ClassList): boolean {
+  if (!classes.rewritable) return false;
+  let edited = false;
+  for (const seg of classes.segments) {
+    if (seg.kind !== 'static' || !seg.span || seg.span.file !== sf.id) continue;
+    const { start, end } = seg.span;
+    if (end <= start) continue;
+    const original = sf.text.slice(start, end);
+    const originalTokens = original.split(/\s+/).filter((t) => t.length > 0);
+    const nextTokens = seg.tokens.map((t) => t.value);
+    // Never blank a segment out, and never churn bytes when the tokens are unchanged.
+    if (nextTokens.length === 0 || originalTokens.length === 0) continue;
+    if (sameTokenList(originalTokens, nextTokens)) continue;
+    const leading = /^\s*/.exec(original)![0];
+    const trailing = /\s*$/.exec(original.slice(leading.length))![0];
+    ms.overwrite(start, end, `${leading}${nextTokens.join(' ')}${trailing}`);
+    edited = true;
+  }
+  return edited;
+}
+
 /**
  * Apply the class-list diff for a single surviving element. Returns true if an edit was made.
  */
 function editClasses(ms: MagicString, doc: IRDocument, sf: SourceFile, el: IRElement): boolean {
   const classes = el.classes;
   // Wholly dynamic / opaque class lists are never rewritten by the passes — leave verbatim.
-  if (classes.hasDynamic || classes.opaque) return false;
+  if (classes.opaque) return false;
+  // A MIXED list (static chunks inside a cn()/template expression) is spliced per-segment; the
+  // whole-value overwrite below is only for fully-static lists.
+  if (classes.hasDynamic) return editStaticSegments(ms, sf, classes);
 
   const tokens = staticTokensOf(classes);
   const valueSpan = classes.valueSpan;
@@ -309,6 +347,9 @@ function classText(doc: IRDocument, classes: ClassList): string | null {
 
   const dynamic = classes.segments.find((s) => s.kind === 'dynamic');
   if (dynamic && dynamic.kind === 'dynamic') {
+    // A mixed (cn()/template) list re-prints as its ORIGINAL whole expression: the fallback
+    // re-printer cannot splice per-segment, so it must never emit only one dynamic fragment.
+    if (classes.wholeExpr != null) return `className={${exprText(doc, classes.wholeExpr).text}}`;
     return `className={${exprText(doc, dynamic.expr).text}}`;
   }
 
