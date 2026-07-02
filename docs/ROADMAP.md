@@ -24,6 +24,9 @@ Everything the future pattern batches will stand on, in one release:
   inside `hover:` / `md:` / `dark:` groups.
 - **Deeper static layout reasoning** — margin-collapse and grid/flex item-sizing modeling in the
   flatten gate, so more wrapper removals are provable without a browser.
+- **Conflict-order correctness** — when an element carries classes that conflict on a property, the
+  winner is decided by stylesheet source order + specificity (never by `class=""` token order);
+  resolution, the compress engine's backstop, and emitted sets all honor identical winners.
 - **Verified tier (opt-in `--verified`)** — for static HTML: render the real page before/after in
   headless Chromium at build time; commit an aggressive flatten only if pixel/box/style-identical.
   Unlocks animation-wrapper class-transfer (`.fade-up`), multi-child unwraps, flex/grid merges,
