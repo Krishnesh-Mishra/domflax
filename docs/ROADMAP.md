@@ -83,6 +83,10 @@ Each batch is validated against real projects before it ships; shadowed/no-op pa
   extraction); CSS-in-JS libraries (MUI/emotion) generate class names at runtime and stay
   structure-only. Backed by per-library **presets**: pre-verified knowledge of which wrappers of a
   given library version are safe.
+- **Try-before-you-adopt audit** — running `npx domflax` inside an existing Vite/Next project offers a
+  wizard option: "estimate what installing domflax would save here" — detects the project type, runs
+  the audit engine over its sources with auto-detected provider/CSS, and prints the score/report
+  table. Changes nothing; pure preview of the value of adopting.
 - Plus the next round of owner's picks. Remaining candidates: editor integration (VS Code hints +
   quick-fix), ESLint plugin, dead-attribute cleanup, PR reports. Patterns continue to accumulate.
 

@@ -1,0 +1,16 @@
+{
+  "name": "@domflax/frontend-vue",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": { "build": "tsup", "typecheck": "tsc --noEmit" },
+  "dependencies": { "@domflax/core": "*", "magic-string": "^0.30.21" },
+  "peerDependencies": { "@vue/compiler-sfc": "^3.4.0" },
+  "peerDependenciesMeta": { "@vue/compiler-sfc": { "optional": true } },
+  "devDependencies": { "@vue/compiler-sfc": "^3.5.0" },
+  "private": true
+}
