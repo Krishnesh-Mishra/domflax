@@ -47,6 +47,12 @@ Everything the future pattern batches will stand on, in one release:
   exposed so configs are type-checked and reusable.
 - **Inline-style converter** — swap `style="padding:16px"` for an equivalent existing class (or the
   reverse) whenever that's shorter and provably identical.
+- **Deep/quick analysis + per-pattern provenance** — every applied change records which pattern did
+  it, in which file, at which location. After a run the CLI offers **quick** (the usual summary) or
+  **deep**: a searchable report (browser HTML + terminal fallback) — a pattern→count table sorted by
+  most-applied, free-text search by pattern name, and drill-down to the exact files/locations a
+  pattern touched. A debugging lens ("what did this pattern actually change, and where?"). Also
+  surfaced when domflax is already wired in a detected project.
 - **`domflax/runtime`** — tiny browser `optimizeHtml(string)` for dynamic HTML before `innerHTML`.
 - **`templatize`** — plain-HTML `cloneNode` fast path for repeated structures.
 - **+10 validated patterns** riding the new capabilities (first verified-tier and extraction-enabled
