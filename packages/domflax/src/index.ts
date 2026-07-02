@@ -28,6 +28,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { htmlKindOf, jsxKindOf, runHtmlPipeline, runJsxPipeline } from './pipeline-run';
+import {
+  addStats,
+  emptyTotals,
+  printCompilationSummary,
+  renderSummary,
+  resetTotals,
+  zeroStats,
+  type FileStatDelta,
+  type Totals,
+} from './summary';
 
 // ── Re-export the public surface ──────────────────────────────────────────────────────────────
 export * from '@domflax/core';
@@ -90,6 +100,12 @@ function isSupported(id: string, include: readonly string[]): boolean {
 export interface DomflaxTransformResult {
   readonly code: string;
   readonly map: EncodedSourceMap | null;
+  /**
+   * Per-file optimization delta (nodes removed / classes saved / bytes saved). Zeroed for
+   * unsupported or unchanged files. Consumed by the build adapters to accumulate the build-end
+   * {@link renderSummary summary}.
+   */
+  readonly stats: FileStatDelta;
 }
 
 /**
@@ -151,18 +167,18 @@ export function createDomflax(options: DomflaxOptions = {}): Domflax {
     },
     patterns,
     transform(code: string, id: string): DomflaxTransformResult {
-      if (!isSupported(id, resolved.include)) return { code, map: null };
+      if (!isSupported(id, resolved.include)) return { code, map: null, stats: zeroStats() };
       const kind = jsxKindOf(id);
       if (kind !== null) {
         const out = runJsxPipeline(code, id, kind, getResolver(), patterns, resolved.safety);
-        return { code: out, map: null };
+        return { code: out.code, map: null, stats: out.stats };
       }
       // `.html`/`.htm` route to the parse5 HTML frontend/backend (surgical span edits).
       if (htmlKindOf(id) !== null) {
         const out = runHtmlPipeline(code, id, getResolver(), patterns, resolved.safety);
-        return { code: out, map: null };
+        return { code: out.code, map: null, stats: out.stats };
       }
-      return { code, map: null };
+      return { code, map: null, stats: zeroStats() };
     },
   };
 }
@@ -182,6 +198,12 @@ export interface DomflaxVitePlugin {
   readonly enforce: 'pre';
   /** Vite's per-file source hook. Fully synchronous and browser-free. */
   transform(code: string, id: string): DomflaxTransformResult | null;
+  /** Vite build-start hook — resets the per-build summary accumulator (watch/serve safe). */
+  buildStart(): void;
+  /** Vite build-end hook — prints the aggregate {@link renderSummary} once (if anything changed). */
+  buildEnd(): void;
+  /** Vite close-bundle hook — prints the summary as a backstop if `buildEnd` did not fire. */
+  closeBundle(): void;
 }
 
 /**
@@ -199,14 +221,39 @@ export interface DomflaxVitePlugin {
  */
 export function vite(options: DomflaxOptions = {}): DomflaxVitePlugin {
   const engine = createDomflax(options);
+
+  // Aggregate across every `transform` call in this plugin instance. `buildStart` resets it so
+  // watch/serve rebuilds each get their own summary; a `printed` latch guards the double-fire of
+  // `buildEnd` + `closeBundle`.
+  const totals: Totals = emptyTotals();
+  let printed = false;
+
+  const printSummary = (): void => {
+    if (printed) return;
+    printed = true;
+    if (totals.files > 0) process.stdout.write(renderSummary(totals));
+  };
+
   return {
     name: 'domflax',
     enforce: 'pre',
+    buildStart(): void {
+      resetTotals(totals);
+      printed = false;
+    },
     transform(code: string, id: string): DomflaxTransformResult | null {
       if (!isSupported(id, engine.options.include)) return null;
       const out = engine.transform(code, id);
+      const changed = out.code !== code;
+      addStats(totals, out.stats, changed);
       // Signal "no change" to Vite when the source round-tripped unchanged.
-      return out.code === code ? null : out;
+      return changed ? out : null;
+    },
+    buildEnd(): void {
+      printSummary();
+    },
+    closeBundle(): void {
+      printSummary();
     },
   };
 }
@@ -230,6 +277,13 @@ interface DomflaxModuleRule {
 /** Anything carrying a `module.rules` array — both a webpack `Compiler.options` and Next's bare config. */
 interface DomflaxWebpackModuleHost {
   module?: { rules?: unknown[] };
+  /** webpack's plugin list (present on both a real `Compiler.options` and Next's bare config). */
+  plugins?: unknown[];
+}
+
+/** A tappable webpack hook (only the `tap` arm domflax uses). */
+interface DomflaxWebpackHook {
+  tap(name: string, fn: (arg: unknown) => void): void;
 }
 
 /**
@@ -242,6 +296,8 @@ interface DomflaxWebpackModuleHost {
  */
 export interface DomflaxWebpackCompiler extends DomflaxWebpackModuleHost {
   options?: DomflaxWebpackModuleHost;
+  /** Present only on a REAL webpack `Compiler` (not on Next's bare config). Used for the summary. */
+  hooks?: { done?: DomflaxWebpackHook };
 }
 
 /**
@@ -290,6 +346,38 @@ function webpackLoaderPath(): string {
  * accept arbitrary webpack loaders, so the `next.config.js` wiring above is a no-op under
  * `next dev --turbopack`. Run domflax through the webpack builder until Turbopack exposes a loader API.
  */
+/**
+ * Tap a REAL webpack `Compiler`'s `done` hook to print the build-end summary. The per-file stats were
+ * stashed on the `compilation` by the loader (separate bundle) under a shared `Symbol.for` key; here
+ * we read + print them once. No-op if `compiler` has no `done` hook (e.g. a bare config or a stub).
+ */
+function tapWebpackSummary(compiler: DomflaxWebpackCompiler): void {
+  const done = compiler.hooks?.done;
+  if (typeof done?.tap !== 'function') return;
+  done.tap('domflax', (stats: unknown) => {
+    // `done` receives a `Stats` whose `.compilation` is the object the loader wrote to; some stubs
+    // pass the compilation directly.
+    const compilation = (stats as { compilation?: unknown } | null)?.compilation ?? stats;
+    printCompilationSummary(compilation);
+  });
+}
+
+/**
+ * Wire the summary printer. On a real `Compiler` we tap `done` directly. On Next's bare config (no
+ * `hooks`) we push a child plugin onto `config.plugins`; webpack later calls its `apply(compiler)`
+ * with the real `Compiler`, at which point we tap `done`.
+ */
+function installWebpackSummary(compiler: DomflaxWebpackCompiler, host: DomflaxWebpackModuleHost): void {
+  if (typeof compiler.hooks?.done?.tap === 'function') {
+    tapWebpackSummary(compiler);
+    return;
+  }
+  const plugins = (host.plugins ??= []);
+  if (Array.isArray(plugins)) {
+    plugins.push({ apply: (real: DomflaxWebpackCompiler) => tapWebpackSummary(real) });
+  }
+}
+
 export function webpack(options: DomflaxOptions = {}): DomflaxWebpackPlugin {
   // Validate options eagerly (parity with the other adapters); the resolver stays lazy.
   createDomflax(options);
@@ -308,6 +396,8 @@ export function webpack(options: DomflaxOptions = {}): DomflaxWebpackPlugin {
         use: [{ loader: webpackLoaderPath(), options }],
       };
       rules.push(rule);
+      // Print the aggregate summary at build end (loader ↔ plugin bridge over the compilation).
+      installWebpackSummary(compiler, host);
     },
   };
 }

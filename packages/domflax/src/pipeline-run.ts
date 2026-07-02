@@ -28,6 +28,47 @@ import { createHtmlBackend, createHtmlFrontend } from '@domflax/frontend-html';
 import { createJsxBackend, createJsxFrontend } from '@domflax/frontend-jsx';
 import { normalizer } from '@domflax/pattern-kit';
 
+import type { FileStatDelta } from './summary';
+
+/** Output of a pipeline run: the printed code plus the per-file optimization delta. */
+export interface PipelineOutput {
+  readonly code: string;
+  readonly stats: FileStatDelta;
+}
+
+/** UTF-8 byte length (matches the CLI's `bytes()` — bytesSaved is measured in real bytes). */
+function bytes(s: string): number {
+  return Buffer.byteLength(s, 'utf8');
+}
+
+/**
+ * Rough class-token count (provider-independent, string-level) — identical to the CLI's
+ * `countClassTokens`, so both surfaces report the same "classes compressed" figure.
+ */
+function countClassTokens(code: string): number {
+  let total = 0;
+  const re = /\b(?:className|class)\s*=\s*"([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    total += m[1]!.split(/\s+/).filter((t) => t.length > 0).length;
+  }
+  return total;
+}
+
+/**
+ * Compute the per-file stat delta the same way the CLI's `finish()` does: nodes from the IR
+ * node-count delta, classes from the class-token delta, bytes from the UTF-8 byte-length delta.
+ */
+function computeStats(code: string, out: string, nodesIn: number, nodesOut: number): FileStatDelta {
+  const classesBefore = countClassTokens(code);
+  const classesAfter = countClassTokens(out);
+  return {
+    nodesRemoved: Math.max(0, nodesIn - nodesOut),
+    classesSaved: Math.max(0, classesBefore - classesAfter),
+    bytesSaved: bytes(code) - bytes(out),
+  };
+}
+
 /** `.tsx`/`.jsx` ⇒ the matching {@link FileKind}; anything else ⇒ null (no JSX frontend). */
 export function jsxKindOf(id: string): FileKind | null {
   const clean = id.split('?', 1)[0] ?? id;
@@ -138,10 +179,12 @@ export function runJsxPipeline(
   resolver: StyleResolver,
   patterns: readonly Pattern[],
   safety: SafetyLevel,
-): string {
+): PipelineOutput {
   const { doc, ctx, passes } = preparePipeline(code, id, kind, resolver, patterns, safety, 'provably-safe');
+  const nodesIn = doc.nodes.size;
   const { doc: optimized } = runPasses(doc, passes, ctx);
-  return finishPipeline(optimized, id, resolver);
+  const out = finishPipeline(optimized, id, resolver);
+  return { code: out, stats: computeStats(code, out, nodesIn, optimized.nodes.size) };
 }
 
 /* ───────────────────────── HTML pipeline (parse5 frontend/backend) ───────────────────────── */
@@ -203,8 +246,10 @@ export function runHtmlPipeline(
   resolver: StyleResolver,
   patterns: readonly Pattern[],
   safety: SafetyLevel,
-): string {
+): PipelineOutput {
   const { doc, ctx, passes } = prepareHtml(code, id, resolver, patterns, safety, 'provably-safe');
+  const nodesIn = doc.nodes.size;
   const { doc: optimized } = runPasses(doc, passes, ctx);
-  return finishHtmlPipeline(optimized, id, resolver);
+  const out = finishHtmlPipeline(optimized, id, resolver);
+  return { code: out, stats: computeStats(code, out, nodesIn, optimized.nodes.size) };
 }

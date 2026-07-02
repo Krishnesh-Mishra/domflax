@@ -13,6 +13,7 @@
  */
 import { createDomflax } from './index';
 import type { Domflax, DomflaxOptions } from './index';
+import { accumulateOnCompilation } from './summary';
 
 /**
  * The slice of webpack's `LoaderContext` the domflax loader touches. Declared locally so this module
@@ -23,6 +24,12 @@ export interface DomflaxLoaderContext {
   readonly resourcePath: string;
   /** Loader options passed via the `module.rule` `use[].options` entry. */
   getOptions?(): DomflaxOptions | undefined;
+  /**
+   * webpack's current `Compilation` (private-but-stable loader-context field). domflax stashes the
+   * per-build stat accumulator here so the plugin's `done` hook — living in a separate bundle — can
+   * read it back. Optional/duck-typed so the loader never hard-depends on webpack.
+   */
+  readonly _compilation?: unknown;
 }
 
 /**
@@ -48,5 +55,8 @@ function engineFor(options: DomflaxOptions): Domflax {
 export default function domflaxLoader(this: DomflaxLoaderContext, source: string): string {
   const options = this.getOptions?.() ?? {};
   const engine = engineFor(options);
-  return engine.transform(source, this.resourcePath).code;
+  const out = engine.transform(source, this.resourcePath);
+  // Bridge to the plugin: stash this file's delta on the webpack compilation for the `done` hook.
+  accumulateOnCompilation(this._compilation, out.stats, out.code !== source);
+  return out.code;
 }
