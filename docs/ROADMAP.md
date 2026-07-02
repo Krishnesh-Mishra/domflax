@@ -55,7 +55,9 @@ corpora:
   etc. Patterns match **structure + computed style, never library identity**, so a shape mined from
   shadcn fires for anyone hand-writing similar markup. Copy-in libraries (shadcn-style, code in your
   repo) are optimized directly at source; runtime libraries' shapes pay off in hand-written lookalikes
-  and static-HTML exports where the rendered wrappers are visible.
+  and static-HTML exports — and these same patterns become the ready-made library knowledge that
+  0.6.0's **compiled-component optimization** applies inside the bundle (patterns ship in 0.4, the
+  node_modules optimizer that uses them ships in 0.6).
 
 Each batch is validated against real projects before it ships; shadowed/no-op patterns are dropped.
 
