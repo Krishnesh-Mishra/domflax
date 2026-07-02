@@ -179,10 +179,10 @@ Where it's going — each release adds the engine capability that unlocks its ne
 
 | Version | Theme | Patterns |
 | --- | --- | --- |
-| **0.3.0** | **Reach** — `cn()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning (margin-collapse, item sizing) | ~25 |
-| **0.4.0** | **Verified tier** — opt-in render-verified flattening for static HTML (real pages, pixel-identical or rejected); unlocks animation-wrapper class-transfer, multi-child unwraps, merges | ~60 |
-| **0.5.0** | **More frontends** — Astro static + Vue SFC frontends, Turbopack, Bootstrap/other providers for the compress engine | ~100 |
-| **0.6.0** | **Perf & ecosystem** — incremental/watch caching, `domflax/runtime`, `templatize` (cloneNode), community `domflax-pattern-*` packages | ~140 |
+| **0.3.0** | **The capability release** — `cn()`/`clsx()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning, the opt-in **verified tier** (render-verified flatten for static HTML), Astro + Vue SFC frontends, Turbopack, more providers | ~18 |
+| **0.4.0** | **The pattern release** — +50 validated patterns riding 0.3.0's capabilities (animation class-transfer, list/table/form, framework- and provider-specific) | ~70 |
+| **0.5.0** | **The performance release** — incremental/watch caching, faster resolver startup, leaner workers, published benchmarks | ~100 |
+| **0.6.0** | **Feature release** — next round of product ideas (audit mode, CSS-side shrinking, editor integration, …) | ~140 |
 | **1.0.0** | **Stable** — frozen API, semver guarantees, docs site, published benchmarks | **200+** |
 
 Every pattern that ships must *uniquely fire on real code* and be proven render-neutral (statically or via the verified tier) — the count grows from new capability surface, never from padding.

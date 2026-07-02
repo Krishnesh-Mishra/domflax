@@ -1,77 +1,64 @@
 # domflax Roadmap → 1.0
 
-The pattern library grows with engine capability, not ahead of it: every pattern must **fire on real
-code** and be **provably (or verifiably) render-neutral**. Pure-static flattening supports roughly
-15–20 genuinely distinct patterns, so each release below adds the engine capability that unlocks its
-next pattern batch — deeper static CSS reasoning, an opt-in render-verified tier, and new frontends
-(each frontend is a whole new pattern domain). Counts are cumulative minimums.
+Strategy: **ship every engine capability early (0.3.0)**, so later releases can focus on one thing
+each — patterns ride on capabilities, so building all capabilities first makes the pattern-only and
+performance-only releases clean. A pattern only ever counts if it **uniquely fires on real code** and
+is **proven render-neutral** (statically, or by the verified tier) — the count grows from capability
+surface, never from padding.
 
-## 0.2.0 — current
+## 0.2.0 — current (published)
 
-- General **compress engine** (minimal-string exact-cover; Tailwind v3 + v4 + custom CSS; re-resolve
-  backstop — never changes rendering, never worse than the original).
-- Tailwind **v4** support + fail-safe (unresolvable classes are never flattened).
-- Lean, validated flatten library (**8 patterns**), HTML frontend (parse5, surgical), grid-parent
-  centering flatten, memory-bounded parallel CLI, per-page `<link>` CSS auto-detection, build-end
-  summary, `--details`.
+General compress engine (minimal-string exact-cover; Tailwind v3 + v4 + custom CSS; re-resolve
+backstop), Tailwind v4 support + fail-safe, lean validated flatten library (8 patterns), HTML
+frontend (parse5, surgical), grid-parent centering flatten, memory-bounded parallel CLI, per-page
+`<link>` CSS auto-detection, build-end summary, `--details`.
 
-## 0.3.0 — Reach: see more of real codebases (~25 patterns)
+## 0.3.0 — The capability release (~18 patterns)
 
-The biggest limiter in real React apps is what domflax is *allowed to look at*.
+Everything the future pattern batches will stand on, in one release:
 
-- **`cn()` / `clsx()` / template-literal static extraction** — compress the static string arguments
-  of `cn("px-4 py-4", cond && "…")` and the static head of template classNames, leaving dynamic parts
-  untouched. (~24% of classNames in a typical shadcn app are currently opaque.)
-- **Arbitrary-value synthesis** in the compress engine (`h-[40px] w-[40px]` → `size-[40px]`;
-  variant-aware compression for `hover:` / `md:` / `dark:` groups).
-- **Deeper static layout reasoning** in the flatten gate: margin-collapse modeling, grid/flex item
-  sizing — turning more wrapper removals provable *without* a browser.
-- Pattern batch: sibling-merge, list/table wrappers, form-control wrappers made provable by the new
-  reasoning.
+- **`cn()` / `clsx()` / template-literal static extraction** — compress the static string parts of
+  `cn("px-4 py-4", cond && "…")` and template classNames, leaving dynamic parts untouched (unlocks
+  the ~25% of classNames that are opaque in a typical shadcn app).
+- **Arbitrary-value + variant-aware compression** — `h-[40px] w-[40px]` → `size-[40px]`; compress
+  inside `hover:` / `md:` / `dark:` groups.
+- **Deeper static layout reasoning** — margin-collapse and grid/flex item-sizing modeling in the
+  flatten gate, so more wrapper removals are provable without a browser.
+- **Verified tier (opt-in `--verified`)** — for static HTML: render the real page before/after in
+  headless Chromium at build time; commit an aggressive flatten only if pixel/box/style-identical.
+  Unlocks animation-wrapper class-transfer (`.fade-up`), multi-child unwraps, flex/grid merges,
+  non-grid centering. Default stays static-only (no browser unless asked).
+- **New frontends** — Astro static (`.astro`) and Vue SFC `<template>`; Turbopack when it exposes a
+  stable transform API.
+- **More providers** — Bootstrap (and friends) plugged into the compress engine as new vocabularies.
+- **+10 validated patterns** riding the new capabilities (first verified-tier and extraction-enabled
+  ones included).
 
-## 0.4.0 — Verified tier: unlock the volume (~60 patterns)
+## 0.4.0 — The pattern release (~70 patterns)
 
-- **Opt-in render-verified flattening for static HTML** (`--verified`): render the *real* page
-  before/after in headless Chromium at build time and commit an aggressive flatten only if
-  pixel/box/style-identical. Static sites have no auth/data-fetching, so verification is exact.
-  Default stays static-only — no browser unless asked.
-- Unlocks the context-dependent families static analysis can never prove: **animation-only wrapper
-  class-transfer** (`.fade-up` wrappers), multi-child unwraps, flex/grid merges, centering under
-  non-grid parents, spacer/divider collapsing.
-- Verified-tier patterns are authored with the same `definePattern`, marked `verify: true`.
+Nothing but patterns: **+50 validated patterns** across all domains, built on 0.3.0's capabilities —
+wrapper / flex / grid / animation (class-transfer) / list / table / form / fragment /
+framework-specific (React, Next, Astro, Vue) / provider-specific. Each batch is validated against
+real projects before it ships; no-ops are dropped.
 
-## 0.5.0 — More frontends, more domains (~100 patterns)
+## 0.5.0 — The performance release
 
-- **Astro static frontend** (`.astro` component markup — statically knowable parents, ideal for
-  flattening) and **Vue SFC** `<template>` frontend; groundwork for Svelte.
-- **Turbopack support** when it exposes a stable transform API.
-- Framework pattern domains: Astro islands/slots, Vue wrapper idioms, Next/RSC fragment patterns.
-- **Bootstrap + utility-framework providers** for the compress engine (same exact-cover algorithm,
-  new vocabularies) → provider-specific compression without new code.
+- **Incremental + watch mode** — content-hash caching so rebuilds only re-optimize changed files;
+  persistent cache across builds; dev-server friendly.
+- Faster resolver startup (v4 bridge warm cache), lower memory per worker, smarter pool scheduling.
+- Published **benchmark suite** (speed + savings on real OSS apps).
+- Pattern count keeps growing in the background (community + small batches).
 
-## 0.6.0 — Performance, DX, ecosystem (~140 patterns)
+## 0.6.0 — Feature release (TBD)
 
-- **Incremental + watch mode**: content-hash caching so rebuilds only re-optimize changed files;
-  persistent cache across builds.
-- **`domflax/runtime`** — tiny browser `optimizeHtml(string)` for dynamic HTML before `innerHTML`.
-- **`templatize`** (plain-HTML `cloneNode` fast path for repeated structures).
-- **Community patterns**: a documented `definePattern` publishing story (npm `domflax-pattern-*`
-  packages, auto-discovered), pattern-quality CI (must fire + must verify), and a patterns gallery.
-- Benchmarks + docs site.
+Reserved for the next round of product ideas (owner's picks). Candidates on the table:
+audit/score mode, CSS-side shrinking, editor integration, dead-attribute cleanup, PR reports,
+`domflax/runtime`, `templatize` — see the idea list in the project discussion; whichever are chosen
+land here, with patterns continuing to accumulate.
 
 ## 1.0.0 — Stable (200+ patterns)
 
-- **≥ 200 patterns**, every one validated (fires on real code) and safe (statically provable or
-  render-verified), across all domains: wrapper / flex / grid / animation / list / table / form /
-  fragment / framework-specific (React, Next, Astro, Vue) / provider-specific.
-- Frozen public API (`domflax`, `domflax/pattern-kit`, `domflax/verify`, `domflax/runtime`),
-  semver guarantees, LTS posture.
-- Full docs site, migration guides, published benchmark suite (nodes/bytes saved on real OSS apps).
-
-### How 200 patterns stays honest
-
-A pattern only counts if it (a) uniquely fires on real-world markup (not shadowed by a more general
-pattern) and (b) is proven render-neutral — statically, or by the verified tier. The growth comes
-from new *capability surface* (extraction, verified tier, new frontends, new providers), not from
-splitting existing patterns into variants. Every release's batch is validated against real projects
-before it ships, and no-op patterns are dropped.
+- **≥ 200 patterns**, every one validated and safe, across all domains and providers.
+- Frozen public API (`domflax`, `domflax/pattern-kit`, `domflax/verify`, `domflax/runtime`), semver
+  guarantees, LTS posture.
+- Full docs site, migration guides, published benchmarks.
