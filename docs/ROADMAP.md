@@ -73,10 +73,16 @@ Each batch is validated against real projects before it ships; shadowed/no-op pa
 
 - **HTML report page** — after a run, generate one shareable `report.html` with before/after diffs
   per file, totals, and charts.
+- **Compiled-component optimization (opt-in `optimizeDeps`)** — a **compiled-JSX frontend** that
+  parses the `jsx()` / `jsxs()` / `createElement()` calls published libraries ship, so domflax can
+  optimize runtime component libraries (HeroUI, DaisyUI/Flowbite-style) *inside the bundle* at build
+  time — no copy-in needed, and hydration-safe because server and client render from the same
+  optimized code. Strongest for Tailwind-based libraries (static class strings, plus `tv()`/`cva()`
+  extraction); CSS-in-JS libraries (MUI/emotion) generate class names at runtime and stay
+  structure-only. Backed by per-library **presets**: pre-verified knowledge of which wrappers of a
+  given library version are safe.
 - Plus the next round of owner's picks. Remaining candidates: editor integration (VS Code hints +
-  quick-fix), ESLint plugin, dead-attribute cleanup, PR reports, component-library presets
-  (pre-tuned pattern packs for shadcn/MUI/DaisyUI/Bootstrap wrapper structures). Patterns continue
-  to accumulate.
+  quick-fix), ESLint plugin, dead-attribute cleanup, PR reports. Patterns continue to accumulate.
 
 ## 1.0.0 — Stable (200+ patterns)
 
