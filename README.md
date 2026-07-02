@@ -173,23 +173,19 @@ Runnable examples live in [`examples/`](./examples): `vite-react-tailwind`, `vit
 
 ## Roadmap
 
-- [x] Monorepo + single bundled package
-- [x] Core engine (IR, pass manager, surgical full-module codegen)
-- [x] Declarative `definePattern({ …, test })` + auto-discovery (flatten patterns)
-- [x] General minimal-string compress **engine** — Tailwind v3 + v4 + custom CSS (no per-utility patterns)
-- [x] Tailwind **v4** support + fail-safe (classes it can't resolve are never flattened)
-- [x] Real Tailwind engine + custom-CSS resolvers
-- [x] CSS selector-safety + residual-skip (don't break `div div h1`; never drop un-reproducible styles)
-- [x] Compression across dynamic content (refs / handlers / `{expr}` children)
-- [x] Optimize JSX inside `.map()` / expressions (list rows)
-- [x] Vite + Next.js (webpack) adapters + CLI (folders, wizard, output-safety, build-end summary)
-- [x] Standalone equivalence verifier (Playwright, opt-in)
-- [x] HTML frontend (`.html`/`.htm`, parse5 + surgical span edits) with per-page `<link>` CSS auto-detection
-- [x] Context-aware centering-wrapper flatten (provably safe under a `grid` parent, Chromium-verified)
-- [x] Memory-bounded parallel CLI batch (`--max-memory` / `--concurrency`, never-OOM)
-- [ ] Astro-static frontend; more providers
-- [ ] `domflax/runtime` — optimize dynamic HTML strings before `innerHTML`
-- [ ] `templatize` (plain-HTML cloneNode)
+Done so far: monorepo + single bundled package · core IR/pass engine with surgical codegen · declarative `definePattern` + auto-discovery · the general compress **engine** (Tailwind v3 + v4 + custom CSS) · Tailwind v4 support + fail-safe · selector-safety & residual-skip · compression across dynamic content and inside `.map()` rows · Vite + Next.js adapters with a build-end summary · HTML frontend with per-page `<link>` CSS auto-detection · grid-parent centering flatten (Chromium-verified) · memory-bounded parallel CLI.
+
+Where it's going — each release adds the engine capability that unlocks its next validated pattern batch (full details in [`docs/ROADMAP.md`](./docs/ROADMAP.md)):
+
+| Version | Theme | Patterns |
+| --- | --- | --- |
+| **0.3.0** | **Reach** — `cn()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning (margin-collapse, item sizing) | ~25 |
+| **0.4.0** | **Verified tier** — opt-in render-verified flattening for static HTML (real pages, pixel-identical or rejected); unlocks animation-wrapper class-transfer, multi-child unwraps, merges | ~60 |
+| **0.5.0** | **More frontends** — Astro static + Vue SFC frontends, Turbopack, Bootstrap/other providers for the compress engine | ~100 |
+| **0.6.0** | **Perf & ecosystem** — incremental/watch caching, `domflax/runtime`, `templatize` (cloneNode), community `domflax-pattern-*` packages | ~140 |
+| **1.0.0** | **Stable** — frozen API, semver guarantees, docs site, published benchmarks | **200+** |
+
+Every pattern that ships must *uniquely fire on real code* and be proven render-neutral (statically or via the verified tier) — the count grows from new capability surface, never from padding.
 
 ## License
 
