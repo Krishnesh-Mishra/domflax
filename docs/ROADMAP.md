@@ -31,8 +31,7 @@ Everything the future pattern batches will stand on, in one release:
   headless Chromium at build time; commit an aggressive flatten only if pixel/box/style-identical.
   Unlocks animation-wrapper class-transfer (`.fade-up`), multi-child unwraps, flex/grid merges,
   non-grid centering. Default stays static-only (no browser unless asked).
-- **New frontends** — Astro static (`.astro`) and Vue SFC `<template>`; Turbopack when it exposes a
-  stable transform API.
+- **New frontends** — Astro static (`.astro`) and Vue SFC `<template>`.
 - **More providers** — Bootstrap (and friends) plugged into the compress engine as new vocabularies.
 - **Audit / score mode** — `npx domflax --audit` changes nothing and reports how much smaller the DOM
   could be (totals + worst files). A Lighthouse-style score for DOM bloat.
@@ -83,6 +82,8 @@ Each batch is validated against real projects before it ships; shadowed/no-op pa
 - **CSS-side shrinking** — after class compression, rules no longer used by anything are removed from
   the stylesheet too, so the CSS file shrinks alongside the DOM.
 - Faster resolver startup (v4 bridge warm cache), lower memory per worker, smarter pool scheduling.
+- **Turbopack support** — once Turbopack exposes a stable loader/transform API (external dependency;
+  may slip to 0.6). Until then, `next build` runs the webpack builder where domflax already works.
 - Published **benchmark suite** (speed + savings on real OSS apps).
 - Pattern count keeps growing in the background (community + small batches).
 

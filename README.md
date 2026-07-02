@@ -179,9 +179,9 @@ Where it's going — each release adds the engine capability that unlocks its ne
 
 | Version | Theme | Patterns |
 | --- | --- | --- |
-| **0.3.0** | **The capability release** — `cn()`/`clsx()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning, the opt-in **verified tier** (render-verified flatten for static HTML), Astro + Vue SFC frontends, Turbopack, more providers, **audit/score mode**, **`domflax.config.js` + typed inline config (`DomflaxConfig`)**, **inline-style ⇄ class converter**, **`domflax/runtime`**, **`templatize`** | ~18 |
+| **0.3.0** | **The capability release** — `cn()`/`clsx()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning, the opt-in **verified tier** (render-verified flatten for static HTML), Astro + Vue SFC frontends, more providers, **audit/score mode**, **onboarding wizard (detect + estimate + auto-install/configure)**, **deep/quick analysis with per-pattern provenance**, **`domflax.config.js` + typed inline config (`DomflaxConfig`)**, **inline-style ⇄ class converter**, **`domflax/runtime`**, **`templatize`** | ~18 |
 | **0.4.0** | **The pattern release** — +100 validated patterns: ~50 mined from real sites/frontends + ~50 from component-library corpora (shadcn, HeroUI, DaisyUI, …). Patterns match structure + computed style, never library identity — so they fire for hand-written lookalikes too | ~118 |
-| **0.5.0** | **The performance release** — incremental/watch caching, **CSS-side shrinking**, faster resolver startup, leaner workers, published benchmarks | ~130 |
+| **0.5.0** | **The performance release** — incremental/watch caching, **CSS-side shrinking**, **Turbopack support** (when its loader API stabilizes), faster resolver startup, leaner workers, published benchmarks | ~130 |
 | **0.6.0** | **Feature release** — **HTML report page**, **compiled-component optimization** (opt-in: optimize runtime libraries like HeroUI *inside the bundle* via a compiled-JSX frontend, hydration-safe) + next picks (editor integration, ESLint plugin, dead-attribute cleanup, …) | ~150 |
 | **1.0.0** | **Stable** — frozen API, semver guarantees, docs site, published benchmarks | **200+** |
 
