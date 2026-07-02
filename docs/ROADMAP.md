@@ -36,6 +36,12 @@ Everything the future pattern batches will stand on, in one release:
 - **More providers** — Bootstrap (and friends) plugged into the compress engine as new vocabularies.
 - **Audit / score mode** — `npx domflax --audit` changes nothing and reports how much smaller the DOM
   could be (totals + worst files). A Lighthouse-style score for DOM bloat.
+- **Onboarding wizard (`npx domflax` in a project)** — detects an existing Vite/Next project and
+  offers: a no-write savings estimate (the audit engine), and **Install & configure** — adds domflax
+  to devDependencies, wires the plugin into `vite.config.ts` / `next.config.js`, and creates a
+  `domflax.config.js` (`defineConfig`) pre-filled with the detected provider/CSS. Config edits are
+  minimal + validated; an unusual config gets a paste-ready snippet instead of an edit — domflax
+  never leaves a broken config. (`domflax init` runs the same non-interactively.)
 - **Config file + typed inline config** — `domflax.config.js` for the CLI, and the same options
   passed directly where the plugin is called (`domflax.vite({ …config })`); a `DomflaxConfig` type is
   exposed so configs are type-checked and reusable.
@@ -86,10 +92,6 @@ Each batch is validated against real projects before it ships; shadowed/no-op pa
   extraction); CSS-in-JS libraries (MUI/emotion) generate class names at runtime and stay
   structure-only. Backed by per-library **presets**: pre-verified knowledge of which wrappers of a
   given library version are safe.
-- **Try-before-you-adopt audit** — running `npx domflax` inside an existing Vite/Next project offers a
-  wizard option: "estimate what installing domflax would save here" — detects the project type, runs
-  the audit engine over its sources with auto-detected provider/CSS, and prints the score/report
-  table. Changes nothing; pure preview of the value of adopting.
 - Plus the next round of owner's picks. Remaining candidates: editor integration (VS Code hints +
   quick-fix), ESLint plugin, dead-attribute cleanup, PR reports. Patterns continue to accumulate.
 
