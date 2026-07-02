@@ -30,8 +30,8 @@
  *     discarded.
  */
 
-import { elementIds, getElement } from './builders';
-import { createSyntheticSink } from './pipeline';
+import { elementIds, getElement } from '../ir/builders';
+import { createSyntheticSink } from '../passes/pipeline';
 import type {
   ClassList,
   ClassSegment,
@@ -46,7 +46,7 @@ import type {
   StyleMap,
   StyleNormalizer,
   StyleResolver,
-} from './types';
+} from '../ir/types';
 
 /* ───────────────────────── helpers shared with reverse-emit ───────────────────────── */
 

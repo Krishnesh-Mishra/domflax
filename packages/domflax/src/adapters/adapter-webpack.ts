@@ -12,10 +12,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { printCompilationAudit } from './audit-bridge';
-import { createDomflax } from './engine';
-import { withConfigFile } from './options';
-import type { DomflaxOptions } from './options';
-import { printCompilationSummary } from './summary';
+import { createDomflax } from '../engine/engine';
+import { withConfigFile } from '../engine/options';
+import type { DomflaxOptions } from '../engine/options';
+import { printCompilationSummary } from '../engine/summary';
 
 /** A `module.rule` `use` entry: an absolute loader path plus the options forwarded to it. */
 interface DomflaxRuleUse {

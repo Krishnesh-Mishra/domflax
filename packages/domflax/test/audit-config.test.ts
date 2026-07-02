@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import domflax, { createDomflax, defineConfig, vite, webpack } from '../src/index';
 import type { DomflaxConfig, DomflaxWebpackCompiler } from '../src/index';
-import { accumulateAuditOnCompilation, printCompilationAudit } from '../src/audit-bridge';
+import { accumulateAuditOnCompilation, printCompilationAudit } from '../src/adapters/audit-bridge';
 import domflaxLoader from '../src/webpack-loader';
 import type { DomflaxLoaderContext } from '../src/webpack-loader';
 

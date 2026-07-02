@@ -21,7 +21,7 @@
  * Pure + dependency-free: only the `./types` contract + `./builders` accessors.
  */
 
-import { conditionKey, getElement } from './builders';
+import { conditionKey, getElement } from '../ir/builders';
 import type {
   CssProperty,
   IRDocument,
@@ -32,7 +32,7 @@ import type {
   StyleDecl,
   StyleMap,
   StyleNormalizer,
-} from './types';
+} from '../ir/types';
 
 /** The static verdict for one flatten op-group. */
 export type FlattenClass = 'provably-safe' | 'needs-verification';

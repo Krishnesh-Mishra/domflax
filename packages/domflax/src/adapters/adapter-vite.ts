@@ -10,12 +10,12 @@
 import { emptyAuditTotals, recordAudit, renderAudit, resetAuditTotals } from '@domflax/cli/audit';
 import type { AuditTotals } from '@domflax/cli/audit';
 
-import { createDomflax } from './engine';
-import type { DomflaxTransformResult } from './engine';
-import { isSupported, withConfigFile } from './options';
-import type { DomflaxOptions } from './options';
-import { addStats, emptyTotals, renderSummary, resetTotals } from './summary';
-import type { Totals } from './summary';
+import { createDomflax } from '../engine/engine';
+import type { DomflaxTransformResult } from '../engine/engine';
+import { isSupported, withConfigFile } from '../engine/options';
+import type { DomflaxOptions } from '../engine/options';
+import { addStats, emptyTotals, renderSummary, resetTotals } from '../engine/summary';
+import type { Totals } from '../engine/summary';
 
 /**
  * Minimal Vite-plugin shape. Declared locally so this adapter does NOT depend on `vite`'s types

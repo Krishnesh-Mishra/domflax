@@ -7,31 +7,31 @@
  */
 
 // Type contract (pure types — zero runtime).
-export type * from './types';
+export type * from './ir/types';
 
 // Runtime: IR builders + traversal.
-export * from './builders';
+export * from './ir/builders';
 
 // Runtime: the trusted applier.
-export * from './ops';
+export * from './ir/ops';
 
 // Runtime: pass manager + match/rewrite contexts (re-exports ./pass-context's public surface).
-export * from './pass-manager';
+export * from './passes/pass-manager';
 
 // Runtime: static flatten classifier (the safety core for the provably-safe gate).
-export * from './flatten-safety';
+export * from './flatten/flatten-safety';
 
 // Runtime: the pure single-file pipeline.
-export * from './pipeline';
+export * from './passes/pipeline';
 
 // Runtime: the shared reverse-emit step (computed → className).
-export * from './reverse-emit';
+export * from './compress/reverse-emit';
 
 // Runtime: segment-local static extraction for mixed (cn()/template) class lists.
-export * from './segment-compress';
+export * from './compress/segment-compress';
 
 // Runtime: the inline-style ⇄ class converter (static `style` attribute → shorter classes).
-export * from './style-to-class';
+export * from './compress/style-to-class';
 
 // Runtime: the provider-uniform minimal-string exact-cover compress engine.
-export * from './compress-engine';
+export * from './compress/compress-engine';

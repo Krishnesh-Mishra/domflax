@@ -11,11 +11,11 @@
  * yet) and structurally typed against webpack: it depends only on a minimal local `LoaderContext`
  * shape, never on the `webpack` package itself.
  */
-import { accumulateAuditOnCompilation } from './audit-bridge';
-import { createDomflax } from './engine';
-import type { Domflax } from './engine';
-import type { DomflaxOptions } from './options';
-import { accumulateOnCompilation } from './summary';
+import { accumulateAuditOnCompilation } from './adapters/audit-bridge';
+import { createDomflax } from './engine/engine';
+import type { Domflax } from './engine/engine';
+import type { DomflaxOptions } from './engine/options';
+import { accumulateOnCompilation } from './engine/summary';
 
 /**
  * The slice of webpack's `LoaderContext` the domflax loader touches. Declared locally so this module

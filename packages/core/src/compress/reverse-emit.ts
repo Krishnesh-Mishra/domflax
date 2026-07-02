@@ -49,8 +49,8 @@
  * (invoked first, below) — order-safe, dynamic parts byte-preserved.
  */
 
-import { elementIds, getElement } from './builders';
-import { createSyntheticSink } from './pipeline';
+import { elementIds, getElement } from '../ir/builders';
+import { createSyntheticSink } from '../passes/pipeline';
 import {
   COMPRESS_FLOOR,
   compressStaticSegments,
@@ -68,7 +68,7 @@ import type {
   IRElement,
   StyleNormalizer,
   StyleResolver,
-} from './types';
+} from '../ir/types';
 
 /** All static class tokens of a {@link ClassList}, in source order. */
 function staticTokensOf(cl: ClassList): string[] {

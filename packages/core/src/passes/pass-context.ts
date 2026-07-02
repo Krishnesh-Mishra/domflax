@@ -30,9 +30,9 @@ import type {
   StyleConflictPolicy,
   StyleMap,
   StyleResolver,
-} from './types';
+} from '../ir/types';
 
-import { elementIds, emptyStyleMap, getElement } from './builders';
+import { elementIds, emptyStyleMap, getElement } from '../ir/builders';
 
 /* ───────────────────────── default resolvers / selector index ───────────────────────── */
 
@@ -213,7 +213,7 @@ export function createRewriteFactory(): RewriteFactory {
     foldInheritedStyles(
       from: ElementLike,
       into: ElementLike | readonly ElementLike[],
-      opts?: { only?: readonly import('./types').CssProperty[]; conditions?: 'base' | 'all' },
+      opts?: { only?: readonly import('../ir/types').CssProperty[]; conditions?: 'base' | 'all' },
     ): RewriteOpDraft {
       const list: readonly ElementLike[] = Array.isArray(into)
         ? (into as readonly ElementLike[])
@@ -250,7 +250,7 @@ export function buildMatchContext(
   elementId: IRNodeId,
   resolver: StyleResolver,
   selectors: SelectorIndex,
-  safety: import('./types').SafetyLevel,
+  safety: import('../ir/types').SafetyLevel,
   phase: PassPhase,
   iteration: number,
 ): MatchContext {

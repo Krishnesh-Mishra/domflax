@@ -25,7 +25,7 @@ import type {
   StyleMap,
   StyleNormalizer,
   StyleResolver,
-} from '../src/types';
+} from '../src/ir/types';
 import {
   BASE_CONDITION,
   BASE_CONDITION_KEY,

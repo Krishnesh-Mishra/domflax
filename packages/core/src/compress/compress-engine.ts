@@ -32,7 +32,7 @@
  * emit is used instead, so a set that does not reproduce `U` is NEVER emitted.
  */
 
-import type { StyleMap, StyleNormalizer } from './types';
+import type { StyleMap, StyleNormalizer } from '../ir/types';
 
 /** Field separator for {@link tupleKey} — a control char that never appears in CSS text. */
 const SEP = '';

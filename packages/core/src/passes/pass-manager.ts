@@ -32,12 +32,12 @@ import type {
   StyleResolver,
   SyntheticSink,
   EmitContext,
-} from './types';
+} from '../ir/types';
 
-import { childIds, elementIds, getElement } from './builders';
-import { applyOps } from './ops';
+import { childIds, elementIds, getElement } from '../ir/builders';
+import { applyOps } from '../ir/ops';
 import { buildMatchContext, createRewriteFactory } from './pass-context';
-import { classifyFlattenOps } from './flatten-safety';
+import { classifyFlattenOps } from '../flatten/flatten-safety';
 
 // Re-export the supporting contexts so `@domflax/core` consumers keep importing them from here / the
 // barrel exactly as before this module was split.

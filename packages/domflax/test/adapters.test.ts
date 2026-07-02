@@ -7,7 +7,7 @@ import domflax, {
   type DomflaxTransformResult,
   type DomflaxWebpackCompiler,
 } from '../src/index';
-import { accumulateOnCompilation, type FileStatDelta } from '../src/summary';
+import { accumulateOnCompilation, type FileStatDelta } from '../src/engine/summary';
 
 /** Shorthand delta builder (BEFORE totals default to generous non-zero values). */
 const delta = (nodesRemoved: number, classesSaved: number, bytesSaved: number): FileStatDelta => ({

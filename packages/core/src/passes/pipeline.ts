@@ -26,9 +26,9 @@ import type {
   StyleMap,
   SyntheticClass,
   SyntheticSink,
-} from './types';
+} from '../ir/types';
 
-import { elementIds, getElement } from './builders';
+import { elementIds, getElement } from '../ir/builders';
 import { createNullSelectorIndex, runPasses } from './pass-manager';
 
 /* ───────────────────────── synthetic sink ───────────────────────── */
@@ -207,7 +207,7 @@ class DefaultPipeline implements Pipeline {
   }
 }
 
-function fixpointFrom(input: PipelineInput): import('./types').FixpointConfig | undefined {
+function fixpointFrom(input: PipelineInput): import('../ir/types').FixpointConfig | undefined {
   const fp = input.config?.fixpoint;
   if (!fp) return undefined;
   return {

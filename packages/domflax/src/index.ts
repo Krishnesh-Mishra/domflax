@@ -18,13 +18,13 @@
  * {@link defineConfig} in the config file for IntelliSense.
  */
 
-import { vite } from './adapter-vite';
-import type { DomflaxVitePlugin } from './adapter-vite';
-import { webpack } from './adapter-webpack';
-import type { DomflaxWebpackPlugin } from './adapter-webpack';
-import { createDomflax } from './engine';
-import type { Domflax } from './engine';
-import type { DomflaxOptions } from './options';
+import { vite } from './adapters/adapter-vite';
+import type { DomflaxVitePlugin } from './adapters/adapter-vite';
+import { webpack } from './adapters/adapter-webpack';
+import type { DomflaxWebpackPlugin } from './adapters/adapter-webpack';
+import { createDomflax } from './engine/engine';
+import type { Domflax } from './engine/engine';
+import type { DomflaxOptions } from './engine/options';
 
 // ── Re-export the public surface ──────────────────────────────────────────────────────────────
 export * from '@domflax/core';
@@ -35,16 +35,16 @@ export { defineConfig } from '@domflax/cli/config-file';
 export type { DomflaxConfig, DomflaxConfigProvider } from '@domflax/cli/config-file';
 
 // Options + engine.
-export { DEFAULT_INCLUDE, resolveOptions, withConfigFile } from './options';
-export type { DomflaxOptions, DomflaxProvider, ResolvedDomflaxOptions } from './options';
-export { createDomflax } from './engine';
-export type { Domflax, DomflaxTransformResult } from './engine';
+export { DEFAULT_INCLUDE, resolveOptions, withConfigFile } from './engine/options';
+export type { DomflaxOptions, DomflaxProvider, ResolvedDomflaxOptions } from './engine/options';
+export { createDomflax } from './engine/engine';
+export type { Domflax, DomflaxTransformResult } from './engine/engine';
 
 // Build adapters.
-export { vite } from './adapter-vite';
-export type { DomflaxVitePlugin } from './adapter-vite';
-export { webpack } from './adapter-webpack';
-export type { DomflaxWebpackCompiler, DomflaxWebpackPlugin } from './adapter-webpack';
+export { vite } from './adapters/adapter-vite';
+export type { DomflaxVitePlugin } from './adapters/adapter-vite';
+export { webpack } from './adapters/adapter-webpack';
+export type { DomflaxWebpackCompiler, DomflaxWebpackPlugin } from './adapters/adapter-webpack';
 
 /**
  * The default-export namespace. Exposes the build adapters and the programmatic factory as an OBJECT

@@ -11,7 +11,7 @@
 import { emptyAuditTotals, recordAudit, renderAudit } from '@domflax/cli/audit';
 import type { AuditTotals } from '@domflax/cli/audit';
 
-import type { FileStatDelta } from './summary';
+import type { FileStatDelta } from '../engine/summary';
 
 /** Global-registry keys — identical string ⇒ identical symbol across the separately-bundled files. */
 const AUDIT_TOTALS_KEY = Symbol.for('domflax.auditTotals');

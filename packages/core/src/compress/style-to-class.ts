@@ -36,8 +36,8 @@
  * attribute is removed by the backends.
  */
 
-import { conditionKey, elementIds, getElement } from './builders';
-import { createSyntheticSink } from './pipeline';
+import { conditionKey, elementIds, getElement } from '../ir/builders';
+import { createSyntheticSink } from '../passes/pipeline';
 import { COMPRESS_FLOOR, residualStyle } from './segment-compress';
 import type {
   ClassList,
@@ -53,7 +53,7 @@ import type {
   StyleMap,
   StyleNormalizer,
   StyleResolver,
-} from './types';
+} from '../ir/types';
 
 /* ───────────────────────── static style-text parsing (shared with the HTML frontend) ───────────────────────── */
 

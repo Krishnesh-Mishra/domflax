@@ -12,7 +12,7 @@ import {
   zeroStats,
   type FileStatDelta,
   type Totals,
-} from '../src/summary';
+} from '../src/engine/summary';
 
 /** Shorthand delta builder (BEFORE totals default to generous non-zero values). */
 const delta = (nodesRemoved: number, classesSaved: number, bytesSaved: number): FileStatDelta => ({
