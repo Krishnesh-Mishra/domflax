@@ -43,12 +43,21 @@ Everything the future pattern batches will stand on, in one release:
 - **+10 validated patterns** riding the new capabilities (first verified-tier and extraction-enabled
   ones included).
 
-## 0.4.0 — The pattern release (~70 patterns)
+## 0.4.0 — The pattern release (~118 patterns)
 
-Nothing but patterns: **+50 validated patterns** across all domains, built on 0.3.0's capabilities —
-wrapper / flex / grid / animation (class-transfer) / list / table / form / fragment /
-framework-specific (React, Next, Astro, Vue) / provider-specific. Each batch is validated against
-real projects before it ships; no-ops are dropped.
+Nothing but patterns: **+100 validated patterns**, built on 0.3.0's capabilities, mined from two
+corpora:
+
+- **~50 from real sites & frontends** — wrapper / flex / grid / animation (class-transfer) / list /
+  table / form / fragment / framework-specific (React, Next, Astro, Vue) shapes profiled from real
+  projects.
+- **~50 from component-library corpora** — shadcn, HeroUI, Tailwind UI, DaisyUI, MUI-rendered-HTML,
+  etc. Patterns match **structure + computed style, never library identity**, so a shape mined from
+  shadcn fires for anyone hand-writing similar markup. Copy-in libraries (shadcn-style, code in your
+  repo) are optimized directly at source; runtime libraries' shapes pay off in hand-written lookalikes
+  and static-HTML exports where the rendered wrappers are visible.
+
+Each batch is validated against real projects before it ships; shadowed/no-op patterns are dropped.
 
 ## 0.5.0 — The performance release
 
