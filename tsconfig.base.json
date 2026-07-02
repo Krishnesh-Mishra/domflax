@@ -22,6 +22,12 @@
       "@domflax/cli/worker": [
         "packages/cli/src/worker.ts"
       ],
+      "@domflax/cli/config-file": [
+        "packages/cli/src/config-file.ts"
+      ],
+      "@domflax/cli/audit": [
+        "packages/cli/src/audit.ts"
+      ],
       "@domflax/*": [
         "packages/*/src/index.ts"
       ]

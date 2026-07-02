@@ -28,6 +28,10 @@ export default defineConfig({
       "@domflax/frontend-jsx": pkg("frontend-jsx"),
       "@domflax/frontend-html": pkg("frontend-html"),
       "@domflax/verify": pkg("verify"),
+      "@domflax/cli/config-file": fileURLToPath(
+        new URL("./packages/cli/src/config-file.ts", import.meta.url),
+      ),
+      "@domflax/cli/audit": fileURLToPath(new URL("./packages/cli/src/audit.ts", import.meta.url)),
       "@domflax/cli": pkg("cli")
     }
   }

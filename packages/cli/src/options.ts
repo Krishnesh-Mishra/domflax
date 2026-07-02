@@ -10,6 +10,8 @@ import { parseArgs } from 'node:util';
 
 import type { SafetyLevel } from '@domflax/core';
 
+import type { DomflaxConfig } from './config-file';
+
 /** How class names resolve to computed styles. */
 export type ProviderOption = 'auto' | 'tailwind' | 'custom';
 
@@ -25,6 +27,11 @@ export interface CliOptions {
   readonly css: readonly string[];
   /** Compute edits + print per-file diffs but write nothing. */
   readonly dryRun: boolean;
+  /**
+   * AUDIT mode (`--audit`): like dry-run but prints a 0–100 DOM-efficiency SCORE box (aggregate
+   * potential savings + worst files) instead of diffs. Writes NOTHING and ignores `--out`.
+   */
+  readonly audit: boolean;
   /** Print a summary (files, nodes removed, classes saved, bytes saved). */
   readonly report: boolean;
   /** Print PER-FILE optimization stats (nodes/classes/bytes for every changed file). */
@@ -59,11 +66,18 @@ function isProvider(value: string): value is ProviderOption {
   return value === 'auto' || value === 'tailwind' || value === 'custom';
 }
 
-function toSafety(raw: string | undefined): SafetyLevel {
-  if (raw === undefined) return DEFAULT_SAFETY;
-  const n = Number(raw);
-  if (n === 0 || n === 1 || n === 2 || n === 3) return n;
-  throw new Error(`domflax: invalid --safety "${raw}" (expected 0, 1, 2 or 3)`);
+/** Resolve the safety level: explicit flag > config file > {@link DEFAULT_SAFETY}. Validates both. */
+function toSafety(raw: string | undefined, fromConfig: number | undefined): SafetyLevel {
+  if (raw !== undefined) {
+    const n = Number(raw);
+    if (n === 0 || n === 1 || n === 2 || n === 3) return n;
+    throw new Error(`domflax: invalid --safety "${raw}" (expected 0, 1, 2 or 3)`);
+  }
+  if (fromConfig !== undefined) {
+    if (fromConfig === 0 || fromConfig === 1 || fromConfig === 2 || fromConfig === 3) return fromConfig;
+    throw new Error(`domflax: invalid "safety" in config file: ${fromConfig} (expected 0, 1, 2 or 3)`);
+  }
+  return DEFAULT_SAFETY;
 }
 
 /** Parse a `--max-memory`/`--concurrency` value into a positive integer, or throw. `null` when absent. */
@@ -76,11 +90,25 @@ function toPositiveInt(raw: string | undefined, flag: string): number | null {
   return n;
 }
 
+/** Validate a positive-integer value coming from the config file. `null` when absent. */
+function configPositiveInt(value: number | undefined, key: string): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`domflax: invalid "${key}" in config file: ${value} (expected a positive integer)`);
+  }
+  return value;
+}
+
 /**
  * Parse argv (excluding `node` + script path) into a validated {@link CliOptions}. A missing
  * positional is NOT an error here — a no-args TTY run is handled upstream by launching the wizard.
+ *
+ * `fileConfig` (from a discovered `domflax.config.*`) is merged UNDERNEATH the flags: every value
+ * an explicit flag provides wins; anything the flags leave unset falls back to the file, then to
+ * the built-in default. The danger flags (`--dangerously-overwrite-source`, `--no-git-check`) and
+ * the interactivity opt-out are deliberately NOT configurable from a file.
  */
-export function parseInvocation(argv: readonly string[]): CliOptions {
+export function parseInvocation(argv: readonly string[], fileConfig: DomflaxConfig = {}): CliOptions {
   const { values, positionals } = parseArgs({
     args: argv as string[],
     allowPositionals: true,
@@ -88,9 +116,10 @@ export function parseInvocation(argv: readonly string[]): CliOptions {
       out: { type: 'string' },
       provider: { type: 'string' },
       css: { type: 'string', multiple: true },
-      'dry-run': { type: 'boolean', default: false },
-      report: { type: 'boolean', default: false },
-      details: { type: 'boolean', default: false },
+      'dry-run': { type: 'boolean' },
+      audit: { type: 'boolean' },
+      report: { type: 'boolean' },
+      details: { type: 'boolean' },
       'dangerously-overwrite-source': { type: 'boolean', default: false },
       'no-git-check': { type: 'boolean', default: false },
       'no-interactive': { type: 'boolean', default: false },
@@ -102,27 +131,33 @@ export function parseInvocation(argv: readonly string[]): CliOptions {
     },
   });
 
-  const provider = values.provider ?? DEFAULT_PROVIDER;
+  const provider = values.provider ?? fileConfig.provider ?? DEFAULT_PROVIDER;
   if (!isProvider(provider)) {
-    throw new Error(`domflax: unknown --provider "${provider}" (expected auto|tailwind|custom)`);
+    throw values.provider !== undefined
+      ? new Error(`domflax: unknown --provider "${provider}" (expected auto|tailwind|custom)`)
+      : new Error(`domflax: unknown "provider" in config file: "${provider}" (expected auto|tailwind|custom)`);
   }
+
+  // `css` (CLI spelling) and `cssFiles` (plugin spelling) are aliases in the shared config.
+  const cssFromConfig = fileConfig.css ?? fileConfig.cssFiles;
 
   return {
     paths: positionals,
-    out: values.out ?? null,
+    out: values.out ?? fileConfig.out ?? null,
     provider,
-    css: values.css ?? [],
-    dryRun: values['dry-run'] === true,
-    report: values.report === true,
-    details: values.details === true,
+    css: values.css ?? (cssFromConfig !== undefined ? [...cssFromConfig] : []),
+    dryRun: (values['dry-run'] ?? fileConfig.dryRun) === true,
+    audit: (values.audit ?? fileConfig.audit) === true,
+    report: (values.report ?? fileConfig.report) === true,
+    details: (values.details ?? fileConfig.details) === true,
     dangerouslyOverwriteSource: values['dangerously-overwrite-source'] === true,
     noGitCheck: values['no-git-check'] === true,
     interactive: values['no-interactive'] !== true && values.yes !== true,
-    passes: null,
-    safety: toSafety(values.safety),
-    projectRoot: values['project-root'] ?? null,
-    maxMemory: toPositiveInt(values['max-memory'], '--max-memory'),
-    concurrency: toPositiveInt(values.concurrency, '--concurrency'),
+    passes: fileConfig.passes !== undefined ? [...fileConfig.passes] : null,
+    safety: toSafety(values.safety, fileConfig.safety),
+    projectRoot: values['project-root'] ?? fileConfig.projectRoot ?? null,
+    maxMemory: toPositiveInt(values['max-memory'], '--max-memory') ?? configPositiveInt(fileConfig.maxMemory, 'maxMemory'),
+    concurrency: toPositiveInt(values.concurrency, '--concurrency') ?? configPositiveInt(fileConfig.concurrency, 'concurrency'),
   };
 }
 
@@ -145,6 +180,7 @@ export const USAGE: string = [
   '  --provider <auto|tailwind|custom>  style resolver (default: auto)',
   '  --css <file...>                stylesheets feeding the custom-CSS provider',
   '  --dry-run                      print per-file diffs; write nothing',
+  '  --audit                        analyze only: print a 0-100 DOM-efficiency score; writes NOTHING',
   '  --report                       print a summary of what changed',
   '  --details                      print per-file optimization stats (nodes/classes/bytes)',
   '  --dangerously-overwrite-source overwrite source in place (needs a clean git tree)',
@@ -156,4 +192,7 @@ export const USAGE: string = [
   '',
   'Many files are processed across CPU cores by a memory-bounded worker pool; small jobs run inline.',
   'With no paths in an interactive terminal, a guided wizard launches.',
+  '',
+  'Options may also come from a domflax.config.{js,mjs,cjs,json} file (nearest file, searched upward',
+  'from --project-root or the cwd). Explicit flags always override the config file.',
 ].join('\n');

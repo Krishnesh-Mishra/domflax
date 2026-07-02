@@ -7,7 +7,16 @@ import domflax, {
   type DomflaxTransformResult,
   type DomflaxWebpackCompiler,
 } from '../src/index';
-import { accumulateOnCompilation } from '../src/summary';
+import { accumulateOnCompilation, type FileStatDelta } from '../src/summary';
+
+/** Shorthand delta builder (BEFORE totals default to generous non-zero values). */
+const delta = (nodesRemoved: number, classesSaved: number, bytesSaved: number): FileStatDelta => ({
+  nodesBefore: nodesRemoved + 10,
+  nodesRemoved,
+  classesSaved,
+  bytesBefore: Math.abs(bytesSaved) + 1000,
+  bytesSaved,
+});
 
 /** Narrow vite's sync (verify-off) transform result for assertions. */
 function sync(r: DomflaxTransformResult | null | Promise<DomflaxTransformResult | null>): DomflaxTransformResult | null {
@@ -69,12 +78,22 @@ describe('domflax.vite()', () => {
     );
     expect(changed.stats.bytesSaved).toBeGreaterThan(0);
     expect(changed.stats.classesSaved).toBeGreaterThanOrEqual(1);
+    // BEFORE totals (audit denominators) are carried alongside the deltas.
+    expect(changed.stats.nodesBefore).toBeGreaterThanOrEqual(1);
+    expect(changed.stats.bytesBefore).toBeGreaterThan(0);
 
     const unchanged = createDomflax().transform('<div>Hello</div>', 'App.tsx');
-    expect(unchanged.stats).toEqual({ nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 });
+    expect(unchanged.stats).toMatchObject({ nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 });
+    expect(unchanged.stats.bytesBefore).toBeGreaterThan(0);
 
     const unsupported = createDomflax().transform('.x { color: red }', 'styles.css');
-    expect(unsupported.stats).toEqual({ nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 });
+    expect(unsupported.stats).toEqual({
+      nodesBefore: 0,
+      nodesRemoved: 0,
+      classesSaved: 0,
+      bytesBefore: 0,
+      bytesSaved: 0,
+    });
   });
 });
 
@@ -194,8 +213,8 @@ describe('domflax.webpack() build-end summary', () => {
 
     // Simulate the loader (separate bundle) writing per-file stats onto the compilation.
     const compilation: Record<string | symbol, unknown> = {};
-    accumulateOnCompilation(compilation, { nodesRemoved: 12, classesSaved: 5, bytesSaved: 300 }, true);
-    accumulateOnCompilation(compilation, { nodesRemoved: 3, classesSaved: 1, bytesSaved: 40 }, true);
+    accumulateOnCompilation(compilation, delta(12, 5, 300), true);
+    accumulateOnCompilation(compilation, delta(3, 1, 40), true);
 
     // webpack fires `done` with a Stats object exposing `.compilation`.
     doneCb!({ compilation });
@@ -223,7 +242,7 @@ describe('domflax.webpack() build-end summary', () => {
     expect(typeof doneCb).toBe('function');
 
     const compilation: Record<string | symbol, unknown> = {};
-    accumulateOnCompilation(compilation, { nodesRemoved: 1, classesSaved: 1, bytesSaved: 10 }, true);
+    accumulateOnCompilation(compilation, delta(1, 1, 10), true);
     doneCb!({ compilation });
     expect(write).toHaveBeenCalledTimes(1);
     expect(String(write.mock.calls[0]![0])).toContain('files optimized');

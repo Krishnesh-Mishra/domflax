@@ -197,6 +197,8 @@ export function runPool(
   init: WorkerInit,
   plan: PoolPlan,
   onWrote?: (dest: string) => void,
+  /** Per-file hook fired for every successful result (used by `--audit` to aggregate stats). */
+  onResult?: (path: string, stats: FileStats, changed: boolean) => void,
 ): Promise<PoolOutcome> {
   const workerPath = resolveWorkerPath();
   const totals = emptyTotals();
@@ -279,6 +281,7 @@ export function runPool(
       h.current = null;
       if (msg.ok) {
         addStats(totals, msg.stats, msg.changed);
+        onResult?.(msg.path, msg.stats, msg.changed);
         if (msg.wrote) {
           wrote.push(msg.wrote);
           changedFiles.push({ dest: msg.wrote, stats: msg.stats });

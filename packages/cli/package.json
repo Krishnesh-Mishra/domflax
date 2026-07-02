@@ -15,6 +15,16 @@
       "types": "./dist/worker.d.ts",
       "import": "./dist/worker.js",
       "require": "./dist/worker.cjs"
+    },
+    "./config-file": {
+      "types": "./dist/config-file.d.ts",
+      "import": "./dist/config-file.js",
+      "require": "./dist/config-file.cjs"
+    },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "import": "./dist/audit.js",
+      "require": "./dist/audit.cjs"
     }
   },
   "main": "./dist/index.cjs",

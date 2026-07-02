@@ -10,6 +10,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
+import { auditStatsFromFile, emptyAuditTotals, recordAudit, renderAudit } from './audit';
+import type { AuditTotals } from './audit';
+import { findConfigFile, loadConfigFileSync } from './config-file';
 import type { CliOptions } from './options';
 import { parseInvocation, shouldPrompt, USAGE } from './options';
 import { computeWorkerCount, shouldUsePool, runPool, addStats, emptyTotals } from './pool';
@@ -23,6 +26,18 @@ import { unifiedDiff } from './diff';
 import { runWizard, WIZARD_CANCELLED } from './wizard';
 
 // Re-export the public surface so consumers/tests reach it from the package root.
+export type { DomflaxConfig, DomflaxConfigProvider, DiscoveredConfig } from './config-file';
+export { defineConfig, findConfigFile, loadConfigFileSync, discoverConfig, CONFIG_FILE_NAMES } from './config-file';
+export type { AuditFileStats, AuditTotals, AuditWorstFile } from './audit';
+export {
+  AUDIT_TOP_FILES,
+  auditStatsFromFile,
+  computeScore,
+  emptyAuditTotals,
+  recordAudit,
+  renderAudit,
+  resetAuditTotals,
+} from './audit';
 export type { CliOptions, ProviderOption } from './options';
 export { parseInvocation, shouldPrompt, USAGE, DEFAULT_SAFETY } from './options';
 export type { WritePlan, WriteMode } from './safety';
@@ -63,6 +78,7 @@ function runInline(
   inputRoot: string,
   plan: WritePlan,
   totals: Totals,
+  auditTotals: AuditTotals | null = null,
 ): number {
   const transform = createTransform(options);
   let failures = 0;
@@ -79,6 +95,13 @@ function runInline(
 
     const result = transform.transformFile(code, file);
     addStats(totals, result.stats, result.changed);
+
+    // AUDIT: aggregate would-be savings only — no diffs, no writes.
+    if (auditTotals !== null) {
+      const rel = path.relative(inputRoot, file) || path.basename(file);
+      recordAudit(auditTotals, rel, auditStatsFromFile(result.stats));
+      continue;
+    }
 
     if (options.dryRun) {
       const rel = path.relative(inputRoot, file) || path.basename(file);
@@ -128,8 +151,9 @@ export async function execute(options: CliOptions): Promise<RunResult> {
   }
 
   const projectRoot = options.projectRoot ?? process.cwd();
+  // Audit writes nothing, so the overwrite-source git gate is irrelevant (and never enforced).
   const gitClean =
-    options.dangerouslyOverwriteSource && !options.noGitCheck ? isGitClean(projectRoot) : true;
+    !options.audit && options.dangerouslyOverwriteSource && !options.noGitCheck ? isGitClean(projectRoot) : true;
 
   const planned = planWrites(options, gitClean);
   if (!planned.ok) {
@@ -140,10 +164,12 @@ export async function execute(options: CliOptions): Promise<RunResult> {
 
   // Choose execution mode: a memory-bounded worker pool for large batches, else the inline path.
   // Dry-run always runs inline (ordered diffs), as does any small job (pool startup isn't worth it).
+  // Audit MAY use the pool (workers return stats without writing), so large audits stay fast.
   const poolPlan = computeWorkerCount(options);
-  const usePool = !options.dryRun && shouldUsePool(files.length, poolPlan);
+  const usePool = (options.audit || !options.dryRun) && shouldUsePool(files.length, poolPlan);
 
   const totals: Totals = emptyTotals();
+  const auditTotals: AuditTotals | null = options.audit ? emptyAuditTotals() : null;
   let failures = 0;
 
   if (usePool) {
@@ -152,6 +178,11 @@ export async function execute(options: CliOptions): Promise<RunResult> {
       { options, inputRoot, plan },
       poolPlan,
       // Per-file "wrote" lines are collected and printed in deterministic (sorted) order below.
+      undefined,
+      auditTotals !== null
+        ? (p, stats) =>
+            recordAudit(auditTotals, path.relative(inputRoot, p) || path.basename(p), auditStatsFromFile(stats))
+        : undefined,
     );
     Object.assign(totals, outcome.totals);
     failures = outcome.failures;
@@ -168,7 +199,14 @@ export async function execute(options: CliOptions): Promise<RunResult> {
       }
     }
   } else {
-    failures += runInline(files, options, inputRoot, plan, totals);
+    failures += runInline(files, options, inputRoot, plan, totals, auditTotals);
+  }
+
+  // AUDIT: the boxed score report IS the output — nothing was (or ever will be) written.
+  if (auditTotals !== null) {
+    process.stdout.write(renderAudit(auditTotals));
+    console.log('domflax: audit — no files were written.');
+    return { exitCode: failures > 0 ? 1 : 0 };
   }
 
   // Always tell the user what happened — never exit silently.
@@ -198,6 +236,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   let options: CliOptions;
   try {
     options = parseInvocation(argv);
+    // Config-file discovery: nearest domflax.config.{js,mjs,cjs,json} upward from --project-root
+    // (or the cwd). Flags stay on top — the file only fills in what the flags left unset.
+    const configPath = findConfigFile(options.projectRoot ?? process.cwd());
+    if (configPath !== null) {
+      options = parseInvocation(argv, loadConfigFileSync(configPath));
+      console.error(`domflax: using ${path.relative(process.cwd(), configPath) || configPath}`);
+    }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     console.error(USAGE);

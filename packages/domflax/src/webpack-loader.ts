@@ -11,8 +11,10 @@
  * yet) and structurally typed against webpack: it depends only on a minimal local `LoaderContext`
  * shape, never on the `webpack` package itself.
  */
-import { createDomflax } from './index';
-import type { Domflax, DomflaxOptions } from './index';
+import { accumulateAuditOnCompilation } from './audit-bridge';
+import { createDomflax } from './engine';
+import type { Domflax } from './engine';
+import type { DomflaxOptions } from './options';
 import { accumulateOnCompilation } from './summary';
 
 /**
@@ -56,6 +58,12 @@ export default function domflaxLoader(this: DomflaxLoaderContext, source: string
   const options = this.getOptions?.() ?? {};
   const engine = engineFor(options);
   const out = engine.transform(source, this.resourcePath);
+  // AUDIT: transform NOTHING — stash the would-be delta for the plugin's `done` hook, then pass
+  // the module through UNCHANGED so the build output is byte-identical.
+  if (engine.options.audit) {
+    accumulateAuditOnCompilation(this._compilation, this.resourcePath, out.stats);
+    return source;
+  }
   // Bridge to the plugin: stash this file's delta on the webpack compilation for the `done` hook.
   accumulateOnCompilation(this._compilation, out.stats, out.code !== source);
   return out.code;

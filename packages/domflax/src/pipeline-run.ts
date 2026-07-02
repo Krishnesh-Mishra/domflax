@@ -63,8 +63,10 @@ function computeStats(code: string, out: string, nodesIn: number, nodesOut: numb
   const classesBefore = countClassTokens(code);
   const classesAfter = countClassTokens(out);
   return {
+    nodesBefore: nodesIn,
     nodesRemoved: Math.max(0, nodesIn - nodesOut),
     classesSaved: Math.max(0, classesBefore - classesAfter),
+    bytesBefore: bytes(code),
     bytesSaved: bytes(code) - bytes(out),
   };
 }

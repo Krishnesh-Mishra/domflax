@@ -282,3 +282,50 @@ untouched bytes are preserved **byte-for-byte**.
   cleanly in both the ESM and CJS outputs (and when bundled into `domflax`).
 - **Same conservative safety.** The `'provably-safe'` gate and the flatten classifier are unchanged;
   centering/flex wrappers stay preserved (context-aware centering is a separate future task).
+
+## J. Shared config + audit mode (0.3.0 round 1)
+
+### Q25. How is domflax configured across the CLI and the build plugins without two option schemas?
+**Decision:** ONE exported type — **`DomflaxConfig`** (`import type { DomflaxConfig } from 'domflax'`)
+— is the union of the plugin options (`provider`, `cssFiles`, `include`, `safety`, `dryRun`, `audit`)
+and the CLI options (`out`, `css`, `report`, `details`, `passes`, `projectRoot`, `maxMemory`,
+`concurrency`). `DomflaxOptions` (the `vite()`/`webpack()`/`createDomflax()` parameter) **extends**
+it, so a typed shared config object spreads straight into any adapter. `css`/`cssFiles` are aliases
+(CLI vs plugin spelling); the CLI spelling wins when both are set.
+
+- **Config file:** `domflax.config.{js,mjs,cjs,json}`, discovered UPWARD from `projectRoot`/cwd —
+  nearest file wins; the walk stops at the filesystem root or the first `package.json` boundary
+  (a config sitting next to that `package.json` is still found). No cosmiconfig — `existsSync`
+  walk + native `require` (Node ≥ 20.19 `require(esm)` covers `.mjs`/ESM `.js`; a clear error
+  suggests `.cjs`/`.json` on older Node) + `JSON.parse`. Both `export default {...}` and
+  `module.exports = {...}` are accepted; `defineConfig()` (identity) gives IntelliSense.
+- **Precedence (everywhere):** explicit flags / inline options > config file > defaults. The CLI
+  re-parses argv with the file config underneath (`parseInvocation(argv, fileConfig)`); the plugins
+  merge via `withConfigFile()` ONCE at factory time and forward `configFile: false` (e.g. into the
+  webpack loader options) so discovery never runs twice. `configFile: false` disables discovery;
+  a string loads that exact file.
+- **Never from a file (flags only, safety):** `--dangerously-overwrite-source`, `--no-git-check`,
+  `--yes`/`--no-interactive`. The wizard pre-fills its choices from the merged options.
+- **Layering:** the shared machinery lives in `@domflax/cli` (`config-file.ts`, subpath-exported)
+  because the CLI cannot import the `domflax` meta package (bin cycle) while `domflax` already
+  bundles `@domflax/cli` — same pattern as the pool worker.
+
+### Q26. What does `--audit` / `audit: true` do, and how is the score computed?
+**Decision:** Audit is "dry-run with a verdict": the FULL transform pipeline runs, but NOTHING is
+written (`--out` is ignored; plugins pass every module through byte-identical) and one boxed report
+is printed — a **0–100 DOM-efficiency score**, aggregate potential (files improvable, nodes
+removable, classes compressible, bytes savable) and the top 5 worst files by savable bytes.
+
+- **Formula:** `byteRatio = bytesSavable / max(1, bytesTotal)`;
+  `nodeRatio = nodesRemovable / max(1, nodesTotal)`;
+  `score = round(100 × (1 − byteRatio) × (1 − nodeRatio))`, clamped to [0, 100]. 100 ⇔ nothing to
+  improve; the two waste dimensions (markup weight, removable DOM) scale multiplicatively.
+  Per-file negative byte deltas clamp to 0 so a pathological file can't inflate the score.
+- **Plumbing (extend, not duplicate):** `FileStatDelta` gained the BEFORE totals
+  (`nodesBefore`/`bytesBefore`) as score denominators; the CLI reuses `FileStats` via
+  `auditStatsFromFile`. Shared accumulator/score/renderer live in `@domflax/cli/audit`; webpack
+  bridges loader → plugin through `Symbol.for('domflax.auditTotals')` on the compilation (same
+  design as the summary bridge). The CLI pool path audits too — workers already return stats; in
+  audit mode they simply skip the write, so large batches stay parallel.
+- **Safety:** audit forces dry-run semantics (no write plan is exercised, the overwrite git gate is
+  moot) and the wizard offers it as an output mode ("Audit — score only, write nothing").

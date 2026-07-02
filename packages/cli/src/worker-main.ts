@@ -33,7 +33,8 @@ export function runWorker(): void {
       const code = readFileSync(file, 'utf8');
       const result = transform.transformFile(code, file);
       let wrote: string | null = null;
-      if (result.changed) {
+      // AUDIT mode never writes — the worker only reports the would-be stats back to the main thread.
+      if (result.changed && init.options.audit !== true) {
         const target = destinationFor(file, inputRoot, plan);
         if (!target.ok) throw new Error(target.error);
         mkdirSync(path.dirname(target.value), { recursive: true });

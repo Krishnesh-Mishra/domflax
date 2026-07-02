@@ -19,17 +19,21 @@
 
 /** Per-file optimization delta (from a single {@link Domflax.transform}). */
 export interface FileStatDelta {
+  /** Total IR/DOM element nodes in the file BEFORE optimization (audit-score denominator). */
+  readonly nodesBefore: number;
   /** DOM/IR nodes removed by provably-safe flattens. */
   readonly nodesRemoved: number;
   /** Class tokens eliminated by semantic compression. */
   readonly classesSaved: number;
+  /** UTF-8 byte length of the file BEFORE optimization (audit-score denominator). */
+  readonly bytesBefore: number;
   /** Bytes saved = original byte length − output byte length (may be negative in edge cases). */
   readonly bytesSaved: number;
 }
 
 /** All-zero delta, for unsupported / unchanged files. */
 export function zeroStats(): FileStatDelta {
-  return { nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 };
+  return { nodesBefore: 0, nodesRemoved: 0, classesSaved: 0, bytesBefore: 0, bytesSaved: 0 };
 }
 
 /** Aggregate accumulator across a whole build. `files` counts only files that actually changed. */

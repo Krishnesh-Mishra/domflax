@@ -3,7 +3,14 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   // `worker` is emitted as its OWN entry so `new Worker(...)` can load `worker.cjs`/`worker.js` at
   // runtime (both from this package's dist and when bundled into `domflax`'s dist).
-  entry: { index: 'src/index.ts', worker: 'src/worker.ts' },
+  // `config-file` + `audit` are standalone entries so the `domflax` meta package can import them
+  // via subpath (`@domflax/cli/config-file` / `@domflax/cli/audit`) without pulling the whole CLI.
+  entry: {
+    index: 'src/index.ts',
+    worker: 'src/worker.ts',
+    'config-file': 'src/config-file.ts',
+    audit: 'src/audit.ts',
+  },
   format: ['esm', 'cjs'],
   dts: true,
   clean: true,

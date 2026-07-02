@@ -10,8 +10,18 @@ import {
   renderSummary,
   resetTotals,
   zeroStats,
+  type FileStatDelta,
   type Totals,
 } from '../src/summary';
+
+/** Shorthand delta builder (BEFORE totals default to generous non-zero values). */
+const delta = (nodesRemoved: number, classesSaved: number, bytesSaved: number): FileStatDelta => ({
+  nodesBefore: nodesRemoved + 10,
+  nodesRemoved,
+  classesSaved,
+  bytesBefore: Math.abs(bytesSaved) + 1000,
+  bytesSaved,
+});
 
 /* ───────────────────────────── formatBytes ───────────────────────────── */
 
@@ -53,9 +63,9 @@ describe('formatCount', () => {
 describe('Totals accumulation', () => {
   it('addStats folds only changed files and sums the deltas', () => {
     const t = emptyTotals();
-    addStats(t, { nodesRemoved: 10, classesSaved: 4, bytesSaved: 100 }, true);
-    addStats(t, { nodesRemoved: 5, classesSaved: 2, bytesSaved: 50 }, true);
-    addStats(t, { nodesRemoved: 99, classesSaved: 99, bytesSaved: 99 }, false); // unchanged → ignored
+    addStats(t, delta(10, 4, 100), true);
+    addStats(t, delta(5, 2, 50), true);
+    addStats(t, delta(99, 99, 99), false); // unchanged → ignored
     expect(t).toEqual({ files: 2, nodesRemoved: 15, classesCompressed: 6, bytesSaved: 150 });
   });
 
@@ -66,7 +76,13 @@ describe('Totals accumulation', () => {
   });
 
   it('zeroStats is an all-zero delta', () => {
-    expect(zeroStats()).toEqual({ nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 });
+    expect(zeroStats()).toEqual({
+      nodesBefore: 0,
+      nodesRemoved: 0,
+      classesSaved: 0,
+      bytesBefore: 0,
+      bytesSaved: 0,
+    });
   });
 });
 
@@ -112,9 +128,9 @@ describe('webpack loader ↔ plugin compilation bridge', () => {
     const compilation: Record<string | symbol, unknown> = {};
 
     // Two loader invocations (as separate bundles would) write to the same compilation object.
-    accumulateOnCompilation(compilation, { nodesRemoved: 8, classesSaved: 3, bytesSaved: 200 }, true);
-    accumulateOnCompilation(compilation, { nodesRemoved: 2, classesSaved: 1, bytesSaved: 60 }, true);
-    accumulateOnCompilation(compilation, { nodesRemoved: 5, classesSaved: 5, bytesSaved: 5 }, false); // no change
+    accumulateOnCompilation(compilation, delta(8, 3, 200), true);
+    accumulateOnCompilation(compilation, delta(2, 1, 60), true);
+    accumulateOnCompilation(compilation, delta(5, 5, 5), false); // no change
 
     // Plugin `done` hook reads it back (Stats.compilation shape).
     printCompilationSummary(compilation);
@@ -134,7 +150,7 @@ describe('webpack loader ↔ plugin compilation bridge', () => {
   it('stays silent when nothing changed', () => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const compilation: Record<string | symbol, unknown> = {};
-    accumulateOnCompilation(compilation, { nodesRemoved: 0, classesSaved: 0, bytesSaved: 0 }, false);
+    accumulateOnCompilation(compilation, delta(0, 0, 0), false);
     printCompilationSummary(compilation);
     expect(write).not.toHaveBeenCalled();
   });
