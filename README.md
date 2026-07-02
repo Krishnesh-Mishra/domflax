@@ -179,10 +179,10 @@ Where it's going — each release adds the engine capability that unlocks its ne
 
 | Version | Theme | Patterns |
 | --- | --- | --- |
-| **0.3.0** | **The capability release** — `cn()`/`clsx()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning, the opt-in **verified tier** (render-verified flatten for static HTML), Astro + Vue SFC frontends, Turbopack, more providers | ~18 |
+| **0.3.0** | **The capability release** — `cn()`/`clsx()`/template-literal static extraction, arbitrary-value + variant-aware compression, deeper static layout reasoning, the opt-in **verified tier** (render-verified flatten for static HTML), Astro + Vue SFC frontends, Turbopack, more providers, **audit/score mode**, **`domflax.config.js` + typed inline config (`DomflaxConfig`)**, **inline-style ⇄ class converter**, **`domflax/runtime`**, **`templatize`** | ~18 |
 | **0.4.0** | **The pattern release** — +50 validated patterns riding 0.3.0's capabilities (animation class-transfer, list/table/form, framework- and provider-specific) | ~70 |
-| **0.5.0** | **The performance release** — incremental/watch caching, faster resolver startup, leaner workers, published benchmarks | ~100 |
-| **0.6.0** | **Feature release** — next round of product ideas (audit mode, CSS-side shrinking, editor integration, …) | ~140 |
+| **0.5.0** | **The performance release** — incremental/watch caching, **CSS-side shrinking**, faster resolver startup, leaner workers, published benchmarks | ~100 |
+| **0.6.0** | **Feature release** — **HTML report page** + next picks (editor integration, ESLint plugin, dead-attribute cleanup, component-library presets, …) | ~140 |
 | **1.0.0** | **Stable** — frozen API, semver guarantees, docs site, published benchmarks | **200+** |
 
 Every pattern that ships must *uniquely fire on real code* and be proven render-neutral (statically or via the verified tier) — the count grows from new capability surface, never from padding.

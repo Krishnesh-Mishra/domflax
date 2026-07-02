@@ -31,6 +31,15 @@ Everything the future pattern batches will stand on, in one release:
 - **New frontends** — Astro static (`.astro`) and Vue SFC `<template>`; Turbopack when it exposes a
   stable transform API.
 - **More providers** — Bootstrap (and friends) plugged into the compress engine as new vocabularies.
+- **Audit / score mode** — `npx domflax --audit` changes nothing and reports how much smaller the DOM
+  could be (totals + worst files). A Lighthouse-style score for DOM bloat.
+- **Config file + typed inline config** — `domflax.config.js` for the CLI, and the same options
+  passed directly where the plugin is called (`domflax.vite({ …config })`); a `DomflaxConfig` type is
+  exposed so configs are type-checked and reusable.
+- **Inline-style converter** — swap `style="padding:16px"` for an equivalent existing class (or the
+  reverse) whenever that's shorter and provably identical.
+- **`domflax/runtime`** — tiny browser `optimizeHtml(string)` for dynamic HTML before `innerHTML`.
+- **`templatize`** — plain-HTML `cloneNode` fast path for repeated structures.
 - **+10 validated patterns** riding the new capabilities (first verified-tier and extraction-enabled
   ones included).
 
@@ -45,16 +54,20 @@ real projects before it ships; no-ops are dropped.
 
 - **Incremental + watch mode** — content-hash caching so rebuilds only re-optimize changed files;
   persistent cache across builds; dev-server friendly.
+- **CSS-side shrinking** — after class compression, rules no longer used by anything are removed from
+  the stylesheet too, so the CSS file shrinks alongside the DOM.
 - Faster resolver startup (v4 bridge warm cache), lower memory per worker, smarter pool scheduling.
 - Published **benchmark suite** (speed + savings on real OSS apps).
 - Pattern count keeps growing in the background (community + small batches).
 
-## 0.6.0 — Feature release (TBD)
+## 0.6.0 — Feature release
 
-Reserved for the next round of product ideas (owner's picks). Candidates on the table:
-audit/score mode, CSS-side shrinking, editor integration, dead-attribute cleanup, PR reports,
-`domflax/runtime`, `templatize` — see the idea list in the project discussion; whichever are chosen
-land here, with patterns continuing to accumulate.
+- **HTML report page** — after a run, generate one shareable `report.html` with before/after diffs
+  per file, totals, and charts.
+- Plus the next round of owner's picks. Remaining candidates: editor integration (VS Code hints +
+  quick-fix), ESLint plugin, dead-attribute cleanup, PR reports, component-library presets
+  (pre-tuned pattern packs for shadcn/MUI/DaisyUI/Bootstrap wrapper structures). Patterns continue
+  to accumulate.
 
 ## 1.0.0 — Stable (200+ patterns)
 
