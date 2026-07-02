@@ -58,12 +58,14 @@ import {
   residualStyle,
   sameTokens,
 } from './segment-compress';
+import { convertInlineStyles } from './style-to-class';
 import type {
   ClassList,
   ClassSegment,
   ClassToken,
   EmitContext,
   IRDocument,
+  IRElement,
   StyleNormalizer,
   StyleResolver,
 } from './types';
@@ -119,6 +121,10 @@ export function syncClassesFromComputed(
   // opaque lists and every dynamic segment are untouched; such elements stay opaque for flatten.
   compressStaticSegments(doc, resolver, norm);
 
+  // INLINE-STYLE ⇄ CLASS conversion: fold a provably-static `style` attribute into the class cover
+  // when that is byte-shorter AND re-resolves to the exact same computed style (see ./style-to-class).
+  convertInlineStyles(doc, resolver, norm);
+
   const sink = createSyntheticSink();
   // A token is safe to drop/replace only when the resolver OWNS it (an unknown / JS-hook / typo class
   // is preserved verbatim) AND its whole contribution is a plain, reproducible subject utility. Owning
@@ -126,6 +132,58 @@ export function syncClassesFromComputed(
   // conservative default is "droppable") can never erase it.
   const isDroppable = (t: string): boolean =>
     resolver.owns(t) && resolver.selectorUsage(t).droppable;
+  // Second tier (VARIANT-AWARE compression): a token that is not unconditionally droppable but whose
+  // exact full effect the resolver VERIFIED it can re-emit (e.g. `hover:px-4`). Dropping such a token
+  // is only ever committed under the mandatory re-resolve equality backstop below.
+  const isRebuildable = (t: string): boolean =>
+    !isDroppable(t) && resolver.owns(t) && resolver.selectorUsage(t).rebuildable === true;
+
+  /**
+   * One re-derivation attempt under a droppability predicate: retained tokens survive verbatim, the
+   * residual is re-emitted (with the droppable originals offered as cover candidates), and the merged
+   * list is returned — or null when nothing was emitted / nothing can change.
+   */
+  const attempt = (
+    tokens: readonly string[],
+    el: IRElement,
+    droppable: (t: string) => boolean,
+    compressOnly: boolean,
+  ): string[] | null => {
+    const retained = tokens.filter((t) => !droppable(t));
+    // A pure-compress element with NOTHING droppable can never shorten — leave it byte-for-byte.
+    if (compressOnly && retained.length === tokens.length) return null;
+
+    const covered = retained.length > 0 ? resolver.resolve({ classes: retained }).styles : null;
+    const target = covered ? residualStyle(el.computed, covered, norm) : el.computed;
+
+    // Minimal class set reproducing the residual (computed MINUS retained-class coverage).
+    const ctx: EmitContext = { normalizer: norm, sink, sourceTokens: tokens.filter(droppable) };
+    const emitted = resolver.emit(target, ctx).classes;
+    // A resolver that reverse-synthesized nothing must never erase the element's classes.
+    if (emitted.length === 0) return null;
+
+    const emittedSet = new Set(emitted);
+    const next: string[] = [];
+    const seen = new Set<string>();
+
+    // 1. Keep each existing token that is either NOT droppable (unknown / opaque / variant /
+    //    selector-bound) or still part of the emitted minimal set — preserving source order.
+    for (const t of tokens) {
+      if (seen.has(t)) continue;
+      const keep = emittedSet.has(t) || !droppable(t);
+      if (keep) {
+        next.push(t);
+        seen.add(t);
+      }
+    }
+    // 2. Append any newly-emitted classes not already present, in emit order.
+    for (const c of emitted) {
+      if (seen.has(c)) continue;
+      next.push(c);
+      seen.add(c);
+    }
+    return next;
+  };
 
   for (const id of elementIds(doc)) {
     const el = getElement(doc, id);
@@ -141,42 +199,25 @@ export function syncClassesFromComputed(
     const tokens = staticTokensOf(el.classes);
     if (tokens.length === 0) continue;
 
-    // Tokens that are ALWAYS retained (unknown / opaque / variant / selector-bound). Their style is
-    // subtracted from the computed map so we never re-emit a class for a property they already cover.
-    const retained = tokens.filter((t) => !isDroppable(t));
-    // A pure-compress element with NOTHING droppable can never shorten — leave it byte-for-byte.
-    if (compressOnly && retained.length === tokens.length) continue;
-
-    const covered = retained.length > 0 ? resolver.resolve({ classes: retained }).styles : null;
-    const target = covered ? residualStyle(el.computed, covered, norm) : el.computed;
-
-    // Minimal class set reproducing the residual (computed MINUS retained-class coverage).
-    const ctx: EmitContext = { normalizer: norm, sink };
-    const emitted = resolver.emit(target, ctx).classes;
-    // A resolver that reverse-synthesized nothing must never erase the element's classes.
-    if (emitted.length === 0) continue;
-
-    const emittedSet = new Set(emitted);
-    const next: string[] = [];
-    const seen = new Set<string>();
-
-    // 1. Keep each existing token that is either NOT droppable (unknown / opaque / variant /
-    //    selector-bound) or still part of the emitted minimal set — preserving source order.
-    for (const t of tokens) {
-      if (seen.has(t)) continue;
-      const keep = emittedSet.has(t) || !isDroppable(t);
-      if (keep) {
-        next.push(t);
-        seen.add(t);
+    // TIER 2 first — variant-aware: additionally drop verified-rebuildable tokens, gated by a
+    // MANDATORY re-resolve equality backstop (regardless of styleDirty). Failing the backstop falls
+    // through to the conservative tier-1 attempt, which is byte-identical to the historical behavior.
+    if (tokens.some(isRebuildable)) {
+      const next = attempt(tokens, el, (t) => isDroppable(t) || isRebuildable(t), compressOnly);
+      if (
+        next &&
+        !sameTokens(next, tokens) &&
+        norm.equals(resolver.resolve({ classes: next }).styles, el.computed) &&
+        (!compressOnly || joinedLength(next) <= joinedLength(tokens))
+      ) {
+        el.classes = staticClassList(el.classes, next);
+        continue;
       }
     }
-    // 2. Append any newly-emitted classes not already present, in emit order.
-    for (const c of emitted) {
-      if (seen.has(c)) continue;
-      next.push(c);
-      seen.add(c);
-    }
 
+    // TIER 1 — plain droppable utilities only (the historical path).
+    const next = attempt(tokens, el, isDroppable, compressOnly);
+    if (!next) continue;
     if (sameTokens(next, tokens)) continue; // no churn when nothing actually changed
 
     if (compressOnly) {

@@ -30,5 +30,8 @@ export * from './reverse-emit';
 // Runtime: segment-local static extraction for mixed (cn()/template) class lists.
 export * from './segment-compress';
 
+// Runtime: the inline-style ⇄ class converter (static `style` attribute → shorter classes).
+export * from './style-to-class';
+
 // Runtime: the provider-uniform minimal-string exact-cover compress engine.
 export * from './compress-engine';

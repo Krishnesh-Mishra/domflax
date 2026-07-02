@@ -105,6 +105,7 @@ function compressSegmentTokens(
   resolver: StyleResolver,
   norm: StyleNormalizer,
   ctx: EmitContext,
+  extended: boolean,
 ): readonly string[] | null {
   const res = resolver.resolve({ classes: [...tokens] });
   // A token the resolver cannot resolve ⇒ the segment's true style is UNKNOWN ⇒ hands off.
@@ -112,7 +113,17 @@ function compressSegmentTokens(
 
   const isDroppable = (t: string): boolean =>
     resolver.owns(t) && resolver.selectorUsage(t).droppable;
-  const retained = tokens.filter((t) => !isDroppable(t));
+  // Variant-aware second tier (`extended`): also drop tokens the resolver VERIFIED it can re-emit
+  // exactly (`hover:px-4`, `md:h-10`, …). Safe here because THIS function's mandatory re-resolve
+  // equality backstop (below) rejects any rewrite that fails to reproduce the segment's exact style;
+  // when the extended tier is rejected the caller retries with the conservative droppable-only tier.
+  const isRebuildable = (t: string): boolean =>
+    !isDroppable(t) && resolver.owns(t) && resolver.selectorUsage(t).rebuildable === true;
+  const droppable = extended
+    ? (t: string): boolean => isDroppable(t) || isRebuildable(t)
+    : isDroppable;
+
+  const retained = tokens.filter((t) => !droppable(t));
   // Nothing droppable ⇒ nothing can be shortened; keep the segment byte-for-byte.
   if (retained.length === tokens.length) return null;
 
@@ -120,7 +131,8 @@ function compressSegmentTokens(
   const covered = retained.length > 0 ? resolver.resolve({ classes: retained }).styles : null;
   const target = covered ? residualStyle(segStyle, covered, norm) : segStyle;
 
-  const emitted = resolver.emit(target, ctx).classes;
+  const emitCtx: EmitContext = { ...ctx, sourceTokens: tokens.filter(droppable) };
+  const emitted = resolver.emit(target, emitCtx).classes;
   // A resolver that reverse-synthesized nothing for a non-empty residual must never erase tokens.
   if (emitted.length === 0 && target.blocks.size > 0) return null;
 
@@ -180,7 +192,11 @@ export function compressStaticSegments(
     const segments: ClassSegment[] = cl.segments.map((seg) => {
       if (seg.kind !== 'static' || !seg.span || seg.tokens.length === 0) return seg;
       const tokens = seg.tokens.map((t) => t.value);
-      const next = compressSegmentTokens(tokens, resolver, norm, ctx);
+      // Variant-aware (extended) tier first; on rejection fall back to the conservative tier —
+      // byte-identical to the historical behavior (both share the equality + length backstops).
+      const next =
+        compressSegmentTokens(tokens, resolver, norm, ctx, true) ??
+        compressSegmentTokens(tokens, resolver, norm, ctx, false);
       if (!next) return seg;
       changed = true;
       const classTokens: ClassToken[] = next.map((value) => ({ value }));

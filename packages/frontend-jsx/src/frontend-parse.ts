@@ -76,6 +76,7 @@ import {
 } from './frontend-ast';
 import type { ClassListHelpers } from './frontend-classlist';
 import { DEFAULT_CLASS_CALLEES, buildClassList } from './frontend-classlist';
+import { parseJsxStyleAttr } from './frontend-style';
 
 export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
   const diagnostics: Diagnostic[] = [];
@@ -261,6 +262,7 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
     meta.isComponent = component;
 
     let classes: ClassList = emptyClassList();
+    let styleAttrNode: JSXAttribute | null = null;
     const entries = new Map<string, AttrValue>();
     const order: string[] = [];
     const spreads: ExprRef[] = [];
@@ -280,11 +282,23 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
       else if (name === 'key') meta.hasKey = true;
       else if (name === 'dangerouslySetInnerHTML') meta.hasDangerousHtml = true;
       else if (/^on[A-Z]/.test(name)) meta.hasEventHandlers = true;
+      else if (name === 'style') styleAttrNode = attr;
       entries.set(name, buildAttrValue(attr));
       order.push(name);
     }
 
     const attrs: AttrMap = { entries, spreads, order };
+
+    // STATIC `style={{…}}` (only literal values) → InlineStyle so the core inline-style ⇄ class
+    // converter can offer it to the compress cover. Any dynamic shape returns null ⇒ untouched.
+    const inlineStyle =
+      styleAttrNode !== null
+        ? parseJsxStyleAttr(styleAttrNode, {
+            spanOf,
+            sliceOf,
+            normalizer: ctx.normalizer,
+          }) ?? undefined
+        : undefined;
 
     const children: IRNodeId[] = [];
     for (const c of node.children) appendChild(c, id, children);
@@ -332,6 +346,7 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
       isComponent: component,
       selfClosing: opening.selfClosing,
       classes,
+      inlineStyle,
       computed,
       attrs,
       children,

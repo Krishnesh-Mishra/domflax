@@ -69,12 +69,30 @@ export function findCssEntries(projectRoot: string): V4CssEntry[] {
 }
 
 /**
- * Adapt a class→CSS snapshot into a {@link TwEngine}. Per-class CSS is parsed lazily (and cached) into
- * the flat {@link TwNode} shape shared with v3, so `generate([...])` is a lookup + parse.
+ * Fetch CSS for candidates OUTSIDE the snapshot (arbitrary values / variant-prefixed tokens).
+ * Returns `[token, css]` pairs, or `null` on any failure. Injected into {@link makeV4Engine} so the
+ * engine's `prime` is unit-testable without a real project.
  */
-function makeV4Engine(entries: ReadonlyArray<readonly [string, string]>, version: string): TwEngine {
+export type V4CandidateFetch = (
+  tokens: readonly string[],
+) => ReadonlyArray<readonly [string, string]> | null;
+
+/**
+ * Adapt a class→CSS snapshot into a {@link TwEngine}. Per-class CSS is parsed lazily (and cached) into
+ * the flat {@link TwNode} shape shared with v3, so `generate([...])` is a lookup + parse. `prime`
+ * batches every snapshot MISS into ONE `fetchCandidates` call (the real design system accepts
+ * arbitrary-value/variant candidates via `candidatesToCss`); misses are negative-cached so a token is
+ * fetched at most once. Exported for engine-level tests.
+ */
+export function makeV4Engine(
+  entries: ReadonlyArray<readonly [string, string]>,
+  version: string,
+  fetchCandidates?: V4CandidateFetch,
+): TwEngine {
   const cssByClass = new Map<string, string>(entries.map(([name, css]) => [name, css] as const));
   const nodeCache = new Map<string, TwNode[]>();
+  /** Tokens already fetched (successfully or not) — never re-fetched. */
+  const primed = new Set<string>();
 
   const nodesFor = (token: string): TwNode[] => {
     let cached = nodeCache.get(token);
@@ -97,6 +115,27 @@ function makeV4Engine(entries: ReadonlyArray<readonly [string, string]>, version
       for (const c of candidates) for (const n of nodesFor(c)) out.push(n);
       return out;
     },
+    prime(candidates: readonly string[]): void {
+      if (!fetchCandidates) return;
+      const need = [...new Set(candidates)].filter(
+        (t) => t.length > 0 && !cssByClass.has(t) && !primed.has(t),
+      );
+      if (need.length === 0) return;
+      for (const t of need) primed.add(t);
+      let fetched: ReadonlyArray<readonly [string, string]> | null = null;
+      try {
+        fetched = fetchCandidates(need);
+      } catch {
+        fetched = null; // a failing fetch only means the candidates won't validate
+      }
+      if (!fetched) return;
+      for (const [name, css] of fetched) {
+        if (typeof name === 'string' && typeof css === 'string' && css.length > 0) {
+          cssByClass.set(name, css);
+          nodeCache.delete(name);
+        }
+      }
+    },
   };
 }
 
@@ -105,7 +144,10 @@ function makeV4Engine(entries: ReadonlyArray<readonly [string, string]>, version
  * design-system snapshot cannot be produced. `version` is the already-detected `tailwindcss` version.
  */
 export function loadV4Engine(projectRoot: string, version: string): TwEngine | null {
-  const snapshot = runV4Bridge({ projectRoot, entries: findCssEntries(projectRoot) });
+  const cssEntries = findCssEntries(projectRoot);
+  const snapshot = runV4Bridge({ projectRoot, entries: cssEntries });
   if (!snapshot) return null;
-  return makeV4Engine(snapshot.entries, version);
+  const fetch: V4CandidateFetch = (tokens) =>
+    runV4Bridge({ projectRoot, entries: cssEntries, candidates: tokens })?.entries ?? null;
+  return makeV4Engine(snapshot.entries, version, fetch);
 }

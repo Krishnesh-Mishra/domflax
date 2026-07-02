@@ -30,6 +30,7 @@ import type {
   ClassSegment,
   Diagnostic,
   FrontendParseContext,
+  InlineStyle,
   IRDocument,
   IRElement,
   IRFragment,
@@ -48,6 +49,8 @@ import {
   defaultMeta,
   emptyClassList,
   emptyStyleMap,
+  inlineDeclMap,
+  parseInlineStyleText,
 } from '@domflax/core';
 
 import type { P5Attr, P5Location, P5Node, Parse5Module } from './walk';
@@ -221,6 +224,25 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
     const attrs: AttrMap = { entries, spreads: [], order };
     const computed = resolveComputed(classTokens, tag, id, meta);
 
+    // STATIC `style="…"` attribute → InlineStyle (verbatim author decls + normalized longhands) so
+    // the inline-style ⇄ class converter can offer it to the compress cover. The attribute STAYS in
+    // `attrs` (flatten guards keep treating styled wrappers as non-inert); anything unparseable (or
+    // a duplicated longhand) leaves inlineStyle empty ⇒ the attribute is never rewritten.
+    let inlineStyle: InlineStyle | undefined;
+    const styleAttr = attrsArr.find((a) => a.name.toLowerCase() === 'style');
+    const styleLoc = attrsLocOf(loc)?.['style'];
+    if (styleAttr && styleLoc && styleAttr.value.length > 0) {
+      const raw = parseInlineStyleText(styleAttr.value, ctx.normalizer);
+      if (raw && raw.length > 0 && inlineDeclMap(raw)) {
+        inlineStyle = {
+          decls: inlineDeclMap(raw)!,
+          dynamic: null,
+          span: span(styleLoc.startOffset, styleLoc.endOffset),
+          raw,
+        };
+      }
+    }
+
     // Children — opaque-subtree elements are NOT descended into; their inner bytes survive verbatim.
     const children: IRNodeId[] = [];
     if (!opaqueSubtree) {
@@ -233,6 +255,7 @@ export function doParse(code: string, ctx: FrontendParseContext): ParseResult {
       isComponent: false,
       selfClosing: loc ? loc.endTag == null : false,
       classes,
+      inlineStyle,
       computed,
       attrs,
       children,

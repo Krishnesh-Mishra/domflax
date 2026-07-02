@@ -126,6 +126,14 @@ export interface SelectorUsage {
   readonly asStructural: boolean;    // .x:nth-child(...) etc.
   /** True iff the class is referenced ONLY as a plain subject — i.e. safe to drop/rename. */
   readonly droppable: boolean;
+  /**
+   * NOT unconditionally droppable, but the resolver has VERIFIED it can re-emit the token's exact
+   * full effect (e.g. a Tailwind variant token like `hover:px-4` whose condition chain round-trips).
+   * Reverse-emit may drop such a token ONLY under a mandatory re-resolve equality backstop — if the
+   * rewritten set does not reproduce the element's computed style exactly, the drop is discarded and
+   * the conservative (droppable-only) behaviour is used instead.
+   */
+  readonly rebuildable?: boolean;
 }
 
 export interface SyntheticClass {
@@ -138,6 +146,13 @@ export interface EmitContext {
   readonly normalizer: StyleNormalizer;
   readonly sink: SyntheticSink;
   readonly preserveTokens?: readonly string[]; // opaque/selector-bound tokens kept verbatim
+  /**
+   * The (droppable) class tokens the target style was derived FROM. They are offered to the
+   * exact-cover engine as candidates alongside the enumerated vocabulary, guaranteeing FEASIBILITY
+   * (the original tokens can always re-cover their own contribution ⇒ the rewrite is never worse
+   * than the original) and letting arbitrary-value / variant tokens participate in the cover.
+   */
+  readonly sourceTokens?: readonly string[];
   readonly budgetMs?: number;
 }
 
@@ -169,6 +184,23 @@ export interface StyleResolver {
    * resolvers) simply omit this — the verifier then falls back to inlining each element's computed style.
    */
   cssFor?(classes: readonly string[]): string;
+  /**
+   * OPTIONAL (CASCADE SAFETY for the inline-style ⇄ class converter): true when some project selector
+   * OTHER than the element's own fully-modelled single-class rules could set `property` on an element
+   * with this tag + class list (a bare `div { padding: … }` rule, a descendant/combinator subject, a
+   * compound selector, …). Inline `style` beats every selector, so moving a declaration into a class
+   * may flip the winner whenever such a competing rule exists — the converter therefore SKIPS any
+   * property this reports `true` for. Providers whose entire style surface is class-keyed utilities
+   * (Tailwind) omit it; the custom-CSS resolver implements it from its project stylesheets.
+   */
+  competesWith?(input: CompetesInput): boolean;
+}
+
+/** Input for {@link StyleResolver.competesWith}: the element's shape + the property being converted. */
+export interface CompetesInput {
+  readonly tagName: string;
+  readonly classes: readonly string[];
+  readonly property: CssProperty;
 }
 
 /* ────────────────────────────────────────────────────────────────────────── *

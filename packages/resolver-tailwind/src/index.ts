@@ -40,17 +40,21 @@
  *
  * ## Reverse (`emit`)
  *
- * `emit(styleMap)` is best-effort reverse synthesis backed by a reverse index built from the engine's
- * own class list (`context.getClassList()`): each indexable utility is generated, its normalized BASE
- * declarations are recorded, and the index is greedily matched against the requested StyleMap
- * (largest declaration-sets first), consuming matched properties so each is mapped to at most one
- * utility. The index is built lazily on first `emit()` and cached.
+ * `emit(styleMap)`'s primary path is the provider-uniform minimal-string EXACT COVER (see
+ * `tailwind/cover.ts`), searched per condition block over three candidate layers:
  *
- * LIMITATION (v0.1.0): `emit` is intentionally less complete than `resolve`. It only matches against
- * the engine's enumerable named utilities and only their unconditional BASE declarations; variant
- * conditions (hover/responsive/pseudo-element) and arbitrary-value utilities are not reverse-synthesized,
- * and no synthetic class is produced for the residual (it is surfaced via `exact:false`). Anything
- * with no matching utility is simply left unmatched — `emit` never throws and never invents a class.
+ *   • ENUMERATED — every base-condition utility from the engine's class list;
+ *   • SYNTHESIZED — arbitrary-value `stem-[value]` candidates for one-property families
+ *     (padding/margin sides, w/h/`size`, gap, inset sides, `rounded`, top/right/bottom/left —
+ *     see `tailwind/synthesize.ts`), each ROUND-TRIP VALIDATED through the real engine before
+ *     admission (so `h-[40px] w-[40px]` folds to `size-[40px]`);
+ *   • VARIANT-PREFIXED — for a non-base block whose variant chain was learned (round-trip
+ *     validated) from a real token, enumerated + synthesized candidates re-prefixed with that
+ *     exact chain (so `hover:px-4 hover:py-4` folds to `hover:p-4`). Different chains never mix.
+ *
+ * The chosen set is verified by the mandatory re-resolve backstop (tuple-exact) before being
+ * returned. When no exact cover exists the greedy BASE-only reverse index is the fallback; anything
+ * it cannot match is surfaced via `exact:false` — `emit` never throws and never invents a class.
  */
 
 export type { TailwindResolverConfig } from './tailwind/config';

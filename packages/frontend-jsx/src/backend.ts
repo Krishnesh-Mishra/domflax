@@ -189,6 +189,27 @@ function editClasses(ms: MagicString, doc: IRDocument, sf: SourceFile, el: IREle
 }
 
 /**
+ * Splice the `style` attribute of an element the inline-style ⇄ class converter rewrote
+ * (`inlineStyle.dirty`): overwrite the whole-attribute span with the SURVIVING object properties
+ * (verbatim source slices, `, `-joined), or — when none survive — remove the attribute together
+ * with the whitespace separating it from what precedes it. Untouched attributes are never spliced.
+ */
+function editInlineStyle(ms: MagicString, sf: SourceFile, el: IRElement): void {
+  const inline = el.inlineStyle;
+  if (!inline?.dirty || !inline.span || inline.span.file !== sf.id) return;
+  const { start, end } = inline.span;
+  if (end <= start || end > sf.text.length) return;
+  const raws = inline.raw ?? [];
+  if (raws.length === 0) {
+    let s = start;
+    while (s > 0 && /\s/.test(sf.text[s - 1]!)) s -= 1;
+    ms.remove(s, end);
+    return;
+  }
+  ms.overwrite(start, end, `style={{${raws.map((r) => r.text).join(', ')}}}`);
+}
+
+/**
  * Extract a `key=…` attribute (verbatim, e.g. `key={f.id}` or `key="row"`) from an opening-tag's
  * source text, or null when the tag carries no key. Brace/quote-aware so `key={f.id}` with nested
  * braces is captured whole. Requires whitespace before `key` so `data-key=` / `aria-keyshortcuts=`
@@ -315,9 +336,11 @@ function surgicalPrint(doc: IRDocument): string | null {
     }
   }
 
-  // 2) Class-list diffs on every surviving element.
+  // 2) Class-list + style-attribute diffs on every surviving element.
   for (const n of kept) {
-    if (n.kind === 'element') editClasses(ms, doc, sf, n);
+    if (n.kind !== 'element') continue;
+    editClasses(ms, doc, sf, n);
+    editInlineStyle(ms, sf, n);
   }
 
   return ms.toString();

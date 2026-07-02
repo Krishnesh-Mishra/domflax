@@ -30,6 +30,12 @@ export interface V4BridgePayload {
   readonly projectRoot: string;
   /** Candidate CSS entries, tried in order until one loads (the last is a minimal default). */
   readonly entries: readonly V4CssEntry[];
+  /**
+   * When set, the child skips class-list enumeration and returns `candidatesToCss` for EXACTLY these
+   * candidate tokens (arbitrary values / variant-prefixed candidates included — v4 accepts them).
+   * Used by the snapshot engine's `prime` to batch-resolve tokens outside the enumerable list.
+   */
+  readonly candidates?: readonly string[];
 }
 
 export interface V4BridgeResult {
@@ -103,9 +109,14 @@ const ds = (await loadViaNode()) || (await loadViaCore());
 if (!ds) out({ ok: false });
 
 let names = [];
-try {
-  names = ds.getClassList().map((e) => (Array.isArray(e) ? e[0] : e)).filter((n) => typeof n === 'string');
-} catch { out({ ok: false }); }
+if (Array.isArray(payload.candidates) && payload.candidates.length > 0) {
+  // Explicit-candidate mode (prime): resolve EXACTLY the requested tokens, no enumeration.
+  names = payload.candidates.filter((n) => typeof n === 'string');
+} else {
+  try {
+    names = ds.getClassList().map((e) => (Array.isArray(e) ? e[0] : e)).filter((n) => typeof n === 'string');
+  } catch { out({ ok: false }); }
+}
 
 let css = [];
 try { css = ds.candidatesToCss(names); } catch { out({ ok: false }); }

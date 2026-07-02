@@ -1,4 +1,5 @@
 import type {
+  CompetesInput,
   ConditionKey,
   CoverClass,
   CssProperty,
@@ -26,6 +27,8 @@ import {
 import { ensurePostcss, pc, sp } from './engine';
 import { collectDecls, mediaContext } from './postcss-helpers';
 import { deriveFingerprint, isPlainClassToken, readCssPath } from './misc-helpers';
+import { buildRiskRule, riskCompetes } from './risk';
+import type { RiskRule } from './risk';
 import {
   isPseudoElement,
   normalizePseudoElement,
@@ -62,6 +65,11 @@ export class CustomCSSResolver implements StyleResolver {
   readonly #known = new Set<string>();
   /** Distinct COMPLEX selectors (combinator or structural pseudo), sorted. */
   readonly #complex: readonly string[];
+  /**
+   * Rules NOT fully modelled by the forward index (bare-tag / universal / combinator / compound /
+   * id / attribute subjects) — the conversion hazards {@link competesWith} reports (see ./risk).
+   */
+  readonly #risk: RiskRule[] = [];
 
   #reverse: readonly ReverseEntry[] | null = null;
   /** Lazily built cover vocabulary (full condition-keyed tuple sets) for the exact-cover engine. */
@@ -194,6 +202,16 @@ export class CustomCSSResolver implements StyleResolver {
     return this.#complex;
   }
 
+  /**
+   * CASCADE SAFETY for the inline-style ⇄ class converter: could any project rule the forward index
+   * does NOT fully model (bare-tag / universal / combinator / compound / id / attribute subject) set
+   * `property` on an element with this tag + class list? Conservative — `true` only suppresses a
+   * conversion. See `./risk`.
+   */
+  public competesWith(input: CompetesInput): boolean {
+    return riskCompetes(this.#risk, input);
+  }
+
   /* ─────────────────────────── internals ─────────────────────────── */
 
   /** Parse one stylesheet and fold its rules into the indexes. Returns the advanced order counter. */
@@ -240,6 +258,9 @@ export class CustomCSSResolver implements StyleResolver {
     const compounds = splitCompounds(selector);
     let hasCombinator = false;
     let hasStructural = false;
+    // Whether this selector's SUBJECT is fully modelled by the forward index (a bare single-class
+    // compound); anything else with declarations becomes a RISK rule for `competesWith` (see ./risk).
+    let subjectModeled = false;
 
     compounds.forEach((compound, index) => {
       const isSubject = index === compounds.length - 1;
@@ -269,6 +290,18 @@ export class CustomCSSResolver implements StyleResolver {
 
       if (structuralPseudo) hasStructural = true;
 
+      // Forward indexing eligibility: a single bare `.class` compound, optionally qualified by
+      // state pseudo-classes and/or one pseudo-element, with NO other simple selector and NO
+      // structural/functional pseudo and NO combinator (compound-level — reused per class below).
+      const forwardEligible =
+        compounds.length === 1 &&
+        classes.length === 1 &&
+        !otherSimple &&
+        !structuralPseudo &&
+        !functionalPseudo &&
+        elementPseudos.length <= 1;
+      if (isSubject && forwardEligible) subjectModeled = true;
+
       for (const cls of classes) {
         const token = cls.value;
         this.#known.add(token);
@@ -283,16 +316,6 @@ export class CustomCSSResolver implements StyleResolver {
           u.loadBearing = true;
         }
 
-        // Forward indexing: a single bare `.class` compound, optionally qualified by state
-        // pseudo-classes and/or a pseudo-element, with NO other simple selector and NO
-        // structural/functional pseudo and NO combinator on this compound's right edge.
-        const forwardEligible =
-          compounds.length === 1 &&
-          classes.length === 1 &&
-          !otherSimple &&
-          !structuralPseudo &&
-          !functionalPseudo &&
-          elementPseudos.length <= 1;
         if (forwardEligible && decls.length > 0) {
           const condition: StyleCondition = {
             media,
@@ -319,6 +342,13 @@ export class CustomCSSResolver implements StyleResolver {
 
     if (hasCombinator || hasStructural) {
       complex.add(selector.toString().trim());
+    }
+
+    // Any rule whose subject the forward index does NOT fully model is a conversion hazard for the
+    // properties it sets (a bare `div {…}` / universal / combinator / compound / id / attr subject).
+    if (!subjectModeled && decls.length > 0) {
+      const rule = buildRiskRule(sp!, compounds, decls);
+      if (rule) this.#risk.push(rule);
     }
   }
 

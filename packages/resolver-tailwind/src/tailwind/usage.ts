@@ -31,3 +31,14 @@ export const DROPPABLE_USAGE: SelectorUsage = {
   asStructural: false,
   droppable: true,
 };
+
+/**
+ * A VERIFIED-REBUILDABLE variant token (`hover:px-4`, `md:h-10`, …): not unconditionally droppable,
+ * but the resolver round-trip-validated that its exact full effect (root utility re-keyed under one
+ * single condition) can be re-emitted. Reverse-emit may drop it ONLY under its mandatory re-resolve
+ * equality backstop; every other consumer treats it exactly like {@link OPAQUE_USAGE}.
+ */
+export const REBUILDABLE_VARIANT_USAGE: SelectorUsage = {
+  ...OPAQUE_USAGE,
+  rebuildable: true,
+};

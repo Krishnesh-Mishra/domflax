@@ -36,4 +36,11 @@ export interface TwEngine {
   readonly context: TwContext;
   /** Generate the postcss rule nodes Tailwind emits for the given candidate class names. */
   generate(candidates: readonly string[]): TwNode[];
+  /**
+   * OPTIONAL: warm the engine for candidates OUTSIDE the enumerable class list (synthesized
+   * arbitrary-value / variant-prefixed tokens). The v3 JIT needs no priming (`generate` compiles any
+   * candidate on demand); the v4 snapshot engine batches ALL misses into ONE bridge call here so the
+   * subsequent per-token `generate` lookups hit the snapshot. Misses are negative-cached.
+   */
+  prime?(candidates: readonly string[]): void;
 }

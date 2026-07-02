@@ -3,7 +3,6 @@
  */
 
 import type {
-  CoverClass,
   CssProperty,
   EmitContext,
   EmitResult,
@@ -17,10 +16,12 @@ import type {
   StyleOrigin,
   StyleResolver,
 } from '@domflax/core';
-import { BASE_CONDITION, conditionKey, minStringCover, styleMapTuples, tupleKey } from '@domflax/core';
+import { BASE_CONDITION, conditionKey, tupleKey } from '@domflax/core';
 import { normalizer } from '@domflax/pattern-kit';
 
 import type { TailwindResolverConfig } from './config';
+import type { BaseVocabEntry, CoverHost } from './cover';
+import { buildBaseVocab, extractionTuples, sameTupleSet, tryExactCover } from './cover';
 import { expandForEmit, synthesizeResidual } from './emit';
 import { loadEngine } from './engine';
 import type { ExtractedToken } from './extract';
@@ -30,7 +31,8 @@ import { parseSelector, unescapeClass } from './selector';
 import { serializeCssNode } from './serialize';
 import { buildStyleMap, shadowedBy } from './stylemap';
 import type { TwEngine, TwGeneratedDecl, TwGeneratedRule } from './types';
-import { DROPPABLE_USAGE, OPAQUE_USAGE } from './usage';
+import { splitVariantChain } from './variants';
+import { DROPPABLE_USAGE, OPAQUE_USAGE, REBUILDABLE_VARIANT_USAGE } from './usage';
 
 /**
  * Providers already warned about an unsupported Tailwind major, so the diagnostic is emitted ONCE per
@@ -56,8 +58,12 @@ class TailwindResolver implements StyleResolver {
   readonly #resolveCache = new Map<string, ResolveResult>();
   /** Lazily built reverse index for the greedy {@link emit} fallback. */
   #reverseIndex: ReadonlyArray<readonly [string, ReadonlyMap<CssProperty, string>]> | null = null;
-  /** Lazily built cover vocabulary (base-condition tuple sets) for the exact-cover engine. */
-  #coverVocab: readonly CoverClass[] | null = null;
+  /** Lazily built enumerated base vocabulary for the exact-cover engine (see ./cover). */
+  #baseVocab: readonly BaseVocabEntry[] | null = null;
+  /** Per-token variant-rebuildability verdicts (round-trip validated — see {@link #learnVariant}). */
+  readonly #variantCache = new Map<string, boolean>();
+  /** Learned condition-key → variant-chain prefixes (`'|:hover|'` → `'hover:'`), shortest wins. */
+  readonly #prefixByCk = new Map<string, string>();
 
   constructor(config: TailwindResolverConfig = {}) {
     const loaded = loadEngine(config);
@@ -214,80 +220,92 @@ class TailwindResolver implements StyleResolver {
   }
 
   /**
-   * The cover vocabulary: every base-condition, plain-subject utility mapped to the {@link tupleKey}s
-   * of its full normalized-longhand declaration set. Built once from a SINGLE engine `generate` over
-   * the enumerable class list (grouped by selector), so it is the same cost as {@link #buildReverseIndex}.
-   * This is what the provider-uniform exact-cover engine searches; the element's own droppable tokens
-   * are members of it, guaranteeing feasibility. Variant / combinator / pseudo utilities are excluded
-   * (their effect is not the element's own base box), so a target carrying such conditions simply finds
-   * no cover and falls back to the greedy emit.
+   * VARIANT LEARNING (round-trip validated): a token with a variant chain (`hover:px-4`) is
+   * REBUILDABLE iff (a) the full token resolves under exactly ONE non-base condition, (b) its bare
+   * root utility (`px-4`) resolves BASE-only, and (c) the root's declarations re-keyed under that
+   * condition equal the full token's declarations EXACTLY. Success also records the (shortest)
+   * condition-key → chain mapping, which is what lets `emit` synthesize re-prefixed candidates for
+   * that condition. Anything that fails any step (e.g. `before:` utilities, which inject `content`)
+   * is NOT rebuildable and stays retained-verbatim.
    */
-  #buildCoverVocab(): readonly CoverClass[] {
-    if (this.#coverVocab) return this.#coverVocab;
-    const baseCk = String(conditionKey(BASE_CONDITION));
-    const out: CoverClass[] = [];
-    if (this.#engine) {
-      try {
-        const classes = this.#engine.context
-          .getClassList()
-          .filter((c): c is string => typeof c === 'string');
-        const nodes = this.#engine.generate(classes);
-        for (const node of nodes) {
-          if (node.type !== 'rule') continue;
-          const rule = node as TwGeneratedRule;
-          const parsed = parseSelector(rule.selector);
-          if (parsed.kind !== 'simple' || parsed.states.length > 0 || parsed.pseudoElement !== '') {
-            continue; // BASE-only, own-box utilities only
-          }
-          const className = unescapeClass(rule.selector);
-          if (className === null) continue;
-          const tuples: string[] = [];
-          const seen = new Set<string>();
-          for (const child of rule.nodes ?? []) {
-            if (child.type !== 'decl') continue;
-            const d = child as TwGeneratedDecl;
-            if (typeof d.value !== 'string') continue;
-            for (const decl of normalizer.normalizeDeclaration(d.prop, d.value, d.important === true)) {
-              const k = tupleKey(baseCk, String(decl.property), String(decl.value), decl.important);
-              if (!seen.has(k)) {
-                seen.add(k);
-                tuples.push(k);
+  #learnVariant(token: string): boolean {
+    const cached = this.#variantCache.get(token);
+    if (cached !== undefined) return cached;
+    let ok = false;
+    const split = splitVariantChain(token);
+    if (split) {
+      const norm = normalizer;
+      const baseCk = String(conditionKey(BASE_CONDITION));
+      const full = this.#extract(token);
+      const fullTuples = extractionTuples(full, norm);
+      const cks = new Set(full.blocks.map((b) => String(conditionKey(b.condition))));
+      if (fullTuples && cks.size === 1 && !cks.has(baseCk)) {
+        const ck = [...cks][0]!;
+        const root = this.#extract(split.root);
+        const rootCks = new Set(root.blocks.map((b) => String(conditionKey(b.condition))));
+        if (
+          root.produced &&
+          !root.opaque &&
+          rootCks.size === 1 &&
+          rootCks.has(baseCk)
+        ) {
+          // Re-key the root's tuples under the full token's condition and demand exact equality.
+          const rekeyed: string[] = [];
+          for (const block of root.blocks) {
+            for (const [prop, value, important] of block.decls) {
+              for (const d of norm.normalizeDeclaration(prop, value, important)) {
+                rekeyed.push(tupleKey(ck, String(d.property), String(d.value), d.important));
               }
             }
           }
-          if (tuples.length > 0) out.push({ token: className, tuples });
+          if (sameTupleSet(rekeyed, fullTuples)) {
+            ok = true;
+            const existing = this.#prefixByCk.get(ck);
+            if (
+              existing === undefined ||
+              split.chain.length < existing.length ||
+              (split.chain.length === existing.length && split.chain < existing)
+            ) {
+              this.#prefixByCk.set(ck, split.chain);
+            }
+          }
         }
-      } catch {
-        /* leave vocab empty on failure — cover degrades to the greedy fallback */
       }
     }
-    this.#coverVocab = out;
-    return out;
+    this.#variantCache.set(token, ok);
+    return ok;
   }
 
-  /**
-   * Try the minimal-string exact-cover engine over the WHOLE utility vocabulary. On success the chosen
-   * set is verified by the mandatory CORRECTNESS BACKSTOP — re-resolve it and assert it reproduces the
-   * target's tuples EXACTLY — before it is returned; any mismatch (or no cover / oversize universe)
-   * yields `null` so {@link emit} uses its greedy fallback. Never returns a set that misrepresents `U`.
-   */
-  #tryCover(normalized: StyleMap, norm: EmitContext['normalizer']): EmitResult | null {
-    const universe = styleMapTuples(normalized, norm);
-    if (universe.length === 0) return { classes: [], exact: true, warnings: [] };
-    const chosen = minStringCover(universe, this.#buildCoverVocab());
-    if (!chosen || chosen.length === 0) return null;
-    const reTuples = new Set(styleMapTuples(this.resolve({ classes: chosen }).styles, norm));
-    if (reTuples.size !== universe.length) return null;
-    for (const t of universe) if (!reTuples.has(t)) return null;
-    return { classes: chosen, exact: true, warnings: [] };
+  /** The {@link CoverHost} view of this resolver the exact-cover assembly drives (see ./cover). */
+  #coverHost(norm: EmitContext['normalizer']): CoverHost {
+    return {
+      vocab: (): readonly BaseVocabEntry[] =>
+        (this.#baseVocab ??= buildBaseVocab(this.#engine, normalizer)),
+      extract: (token: string): ExtractedToken => this.#extract(token),
+      prime: (tokens: readonly string[]): void => {
+        try {
+          this.#engine?.prime?.(tokens);
+        } catch {
+          /* a failing prime only means the pending candidates won't validate */
+        }
+      },
+      prefixFor: (ck: string): string | undefined => this.#prefixByCk.get(ck),
+      learn: (token: string): void => {
+        this.#learnVariant(token);
+      },
+      resolveStyles: (classes: readonly string[]): StyleMap =>
+        norm.normalizeStyleMap(this.resolve({ classes: [...classes] }).styles),
+    };
   }
 
   emit(styles: StyleMap, ctx: EmitContext): EmitResult {
     const norm = ctx.normalizer ?? normalizer;
     const normalized = norm.normalizeStyleMap(styles);
 
-    // Primary path: the provider-uniform minimal-string exact cover over the full vocabulary.
-    const cover = this.#tryCover(normalized, norm);
+    // Primary path: the provider-uniform minimal-string exact cover — enumerated vocabulary +
+    // synthesized arbitrary-value candidates + variant-prefixed candidates + the element's own
+    // droppable tokens, solved per condition block and verified by the re-resolve backstop.
+    const cover = tryExactCover(this.#coverHost(norm), normalized, norm, ctx.sourceTokens);
     if (cover) return cover;
 
     const base = normalized.blocks.get(conditionKey(BASE_CONDITION));
@@ -386,15 +404,18 @@ class TailwindResolver implements StyleResolver {
     // No project selector graph yet, so we cannot know how a CUSTOM (non-Tailwind) class is
     // referenced — treat it as load-bearing (preserved verbatim). A resolver-OWNED utility, by
     // contrast, is safe to drop/replace iff its whole effect is reproducible from `computed`: it
-    // must be a plain (non-opaque) utility contributing ONLY base-condition declarations. Opaque
-    // (combinator/at-rule) and variant-bound utilities are kept, because `emit` cannot rebuild them.
+    // must be a plain (non-opaque) utility contributing ONLY base-condition declarations. A
+    // VARIANT-BOUND utility whose exact effect round-trips ({@link #learnVariant}) is surfaced as
+    // REBUILDABLE — droppable only under reverse-emit's mandatory equality backstop. Everything
+    // else (opaque combinator/at-rule utilities, unvalidated variants) is kept verbatim.
     const ex = this.#extract(token);
     if (!ex.produced || ex.opaque) return OPAQUE_USAGE;
     const baseOnly =
       ex.blocks.length > 0 &&
       ex.blocks.every((b) => conditionKey(b.condition) === conditionKey(BASE_CONDITION));
-    if (!baseOnly) return OPAQUE_USAGE;
-    return DROPPABLE_USAGE;
+    if (baseOnly) return DROPPABLE_USAGE;
+    if (this.#learnVariant(token)) return REBUILDABLE_VARIANT_USAGE;
+    return OPAQUE_USAGE;
   }
 }
 

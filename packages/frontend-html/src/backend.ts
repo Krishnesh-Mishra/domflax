@@ -120,6 +120,34 @@ function editClasses(ms: MagicString, doc: IRDocument, sf: SourceFile, el: IREle
   return true;
 }
 
+/* ───────────────────────── style-attribute rewrite (inline-style ⇄ class converter) ───────────────────────── */
+
+/**
+ * Splice the `style` attribute of an element the converter rewrote (`inlineStyle.dirty`): overwrite
+ * the attribute span with the SURVIVING author declarations (verbatim text, `; `-joined), or — when
+ * none survive — remove the attribute together with the whitespace separating it from what precedes
+ * it. Untouched attributes (no `dirty` flag) are never spliced.
+ */
+function editInlineStyle(ms: MagicString, sf: SourceFile, el: IRElement): void {
+  const inline = el.inlineStyle;
+  if (!inline?.dirty || !inline.span || inline.span.file !== sf.id) return;
+  const { start, end } = inline.span;
+  if (end <= start || end > sf.text.length) return;
+  const raws = inline.raw ?? [];
+  if (raws.length === 0) {
+    let s = start;
+    while (s > 0 && /\s/.test(sf.text[s - 1]!)) s -= 1;
+    ms.remove(s, end);
+    return;
+  }
+  const orig = sf.text.slice(start, end);
+  const eq = orig.indexOf('=');
+  const prefix = eq === -1 ? 'style=' : orig.slice(0, eq + 1);
+  const after = eq === -1 ? '' : orig.slice(eq + 1).trimStart();
+  const quote = after.startsWith("'") ? "'" : '"';
+  ms.overwrite(start, end, `${prefix}${quote}${raws.map((r) => r.text).join('; ')}${quote}`);
+}
+
 /* ───────────────────────── surgical codegen ───────────────────────── */
 
 interface RemovedRegion {
@@ -167,8 +195,12 @@ function surgicalPrint(doc: IRDocument): string | null {
     }
   }
 
-  // 2) Class-list diffs on every surviving element.
-  for (const n of kept) if (n.kind === 'element') editClasses(ms, doc, sf, n);
+  // 2) Class-list + style-attribute diffs on every surviving element.
+  for (const n of kept) {
+    if (n.kind !== 'element') continue;
+    editClasses(ms, doc, sf, n);
+    editInlineStyle(ms, sf, n);
+  }
 
   return ms.toString();
 }

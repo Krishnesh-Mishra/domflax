@@ -266,10 +266,36 @@ export interface AttrMap {
   readonly order: readonly string[];
 }
 
+/**
+ * One AUTHOR-WRITTEN declaration of a static `style` attribute, kept verbatim so the backend can
+ * re-serialize the surviving declarations byte-identically after the inline-style ⇄ class converter
+ * moved some of them into classes. `decls` is the declaration's normalized longhand expansion (the
+ * shape the converter matches against the compress cover).
+ */
+export interface InlineStyleRawDecl {
+  /** Verbatim author text (HTML: `prop: value`; JSX: the `key: value` object-property source slice). */
+  readonly text: string;
+  /** Normalized longhand declarations this author declaration sets. */
+  readonly decls: readonly StyleDecl[];
+  readonly important: boolean;
+}
+
 export interface InlineStyle {
   readonly decls: ReadonlyMap<CssProperty, StyleDecl>;
   readonly dynamic: readonly ExprRef[] | null; // style={expr} → blocks style folding
   readonly span?: SourceSpan;
+  /**
+   * The author's declarations in source order (STATIC attributes only — see the frontends). Present
+   * iff the whole attribute was provably static, which is what makes the element eligible for the
+   * inline-style ⇄ class converter; any dynamic value leaves this unset (attribute untouched).
+   */
+  readonly raw?: readonly InlineStyleRawDecl[];
+  /**
+   * Set by the inline-style ⇄ class converter when it rewrote this attribute (`raw` now holds only
+   * the SURVIVING declarations; empty ⇒ the whole attribute is removed). The backends splice the
+   * attribute span only when this is set, so untouched attributes stay byte-for-byte identical.
+   */
+  readonly dirty?: boolean;
 }
 
 /* ────────────────────────────────────────────────────────────────────────── *

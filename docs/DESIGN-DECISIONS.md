@@ -363,3 +363,58 @@ apps ~25 % of classNames are this shape with mostly-static tokens.
   the one shared reverse-emit step. The JSX backend splices each rewritten segment via its own
   span, preserving the segment's leading/trailing whitespace (a template chunk's boundary space is
   the token separator against the neighbouring `${expr}`).
+
+## L. Compress-engine upgrades: arbitrary values, variants, inline styles (0.3.0 round 3)
+
+**Q: The forward engine resolves `h-[40px]` fine, but the reverse side only searched the enumerable
+class list — `h-[40px] w-[40px]` could never fold to `size-[40px]`. How do we propose candidates we
+cannot enumerate?**
+
+- **Synthesis + mandatory round-trip.** For one-property families with a known stem mapping
+  (padding/margin sides, `w`/`h`/`size`, `gap`/`gap-x`/`gap-y`, inset sides + `top/right/bottom/left`,
+  `rounded`) the cover builder PROPOSES `stem-[value]` candidates for the exact values a target block
+  asks for (`resolver-tailwind/synthesize.ts`). A proposal is only a candidate: it is generated
+  through the REAL engine (v3 JIT compiles any candidate; the v4 snapshot engine batches all misses
+  into ONE `candidatesToCss` bridge call via `TwEngine.prime`) and admitted only when its resolved,
+  normalized tuples equal the intended declarations EXACTLY. A bogus synth (engine says 41px, we
+  wanted 40px) is silently discarded. Cost is inherent — the DP minimizes token length, so an
+  enumerated `p-4` always beats `p-[1rem]` when the value is on the scale.
+- **Why not convert px↔rem?** Never: root font-size is a runtime fact. `style={{padding:16}}`
+  converts to `p-[16px]`, not `p-4`; only a literal `1rem` matches `p-4`.
+
+**Q: Variant tokens (`hover:px-4 hover:py-4`) were retained verbatim (opaque for compress). How do
+we compress WITHIN a variant chain without ever mixing chains or dropping a hover style?**
+
+- **The normalized condition key IS the chain identity.** Each `StyleMap` condition block is one
+  group; candidates for a non-base block are enumerated + synthesized utilities RE-PREFIXED with
+  that block's exact chain, at full prefixed cost. Chains are LEARNED, never assumed: a token like
+  `hover:px-4` teaches `conditionKey ↔ 'hover:'` only after a round-trip proof (root resolves
+  BASE-only, full token resolves to the root's declarations under exactly one condition). `before:`
+  utilities fail the proof (they inject `content`) and stay verbatim; unknown variants resolve to
+  nothing and are retained as unresolved tokens. Because no candidate spans two conditions, the
+  exact cover decomposes into independent per-block DP solves.
+- **Droppability got a second tier, not a loosened gate.** `SelectorUsage.rebuildable` marks a
+  validated variant token; reverse-emit/segment-compress may drop such tokens ONLY in a first
+  attempt that carries a MANDATORY re-resolve equality backstop (style-dirty elements included);
+  any mismatch falls back to the historical droppable-only pass byte-for-byte. `EmitContext.sourceTokens`
+  feeds the element's own droppable tokens into the cover as candidates, so feasibility is
+  guaranteed and the rewrite can never be worse than the original.
+
+**Q: A static `style` attribute beats EVERY selector. When is `style="padding:16px"` → `class="… p-4"`
+provably render-neutral?**
+
+- **Only when the element's own fully-resolved classes are the only competing source.** The
+  converter (`core/style-to-class.ts`, invoked from `syncClassesFromComputed`) merges the static
+  style declarations over the class-derived style and asks the cover for one combined target. It
+  skips: any unknown/opaque class token, any property a NON-BASE condition block also sets (inline
+  used to beat `hover:p-2` unconditionally), `!important`, custom properties (`--*`, descendants may
+  read them), spread attrs/components/floor-0 nodes, and — for the custom-CSS provider — any
+  property flagged by the new `StyleResolver.competesWith` (a bare `div { padding: 4px }`, universal,
+  combinator, compound, id/attr subject also setting it; conservative superset matching, `true` only
+  suppresses). Tailwind omits `competesWith` — its whole modelled surface is class-keyed.
+- **Two hard gates before any byte moves:** the rewritten class set must RE-RESOLVE to the exact
+  combined target (normalizer-equal), and total bytes (class attr + remaining style attr) must
+  STRICTLY shrink. Surviving declarations stay inline VERBATIM (author text preserved per raw decl);
+  an emptied attribute is removed (span + separating whitespace) by surgical backend splices in both
+  frontends. The attribute also STAYS in `attrs` at parse time, so flatten guards keep treating
+  styled wrappers as non-inert.
